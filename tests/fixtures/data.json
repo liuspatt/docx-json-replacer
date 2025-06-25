@@ -3,5 +3,7 @@
   "input.date": "2025-06-25",
   "input.fecha": "2025-06-25",
   "input.company": "Example Corp",
-  "input.position": "Software Engineer"
+  "input.position": "Software Engineer",
+  "part.creditlimit": "Credit limit 200.000,00",
+  "input.collateral": "Collateral details"
 }

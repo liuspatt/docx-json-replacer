@@ -1,27 +1,31 @@
 import json
 from typing import Dict, Any
-from docx import Document
+from docxtpl import DocxTemplate
 
 
 class DocxReplacer:
     def __init__(self, docx_path: str):
         self.docx_path = docx_path
-        self.document = Document(docx_path)
+        self.template = DocxTemplate(docx_path)
     
     def replace_from_json(self, json_data: Dict[str, Any]) -> None:
-        for paragraph in self.document.paragraphs:
-            for key, value in json_data.items():
-                placeholder = f"{{{{{key}}}}}"
-                if placeholder in paragraph.text:
-                    paragraph.text = paragraph.text.replace(placeholder, str(value))
+        # Convert dot notation keys to nested dictionary structure
+        context = {}
+        for key, value in json_data.items():
+            if '.' in key:
+                # Split key like "input.name" into ["input", "name"]
+                parts = key.split('.')
+                current = context
+                for part in parts[:-1]:
+                    if part not in current:
+                        current[part] = {}
+                    current = current[part]
+                current[parts[-1]] = value
+            else:
+                context[key] = value
         
-        for table in self.document.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    for key, value in json_data.items():
-                        placeholder = f"{{{{{key}}}}}"
-                        if placeholder in cell.text:
-                            cell.text = cell.text.replace(placeholder, str(value))
+        # Render the template with the context
+        self.template.render(context)
     
     def replace_from_json_file(self, json_path: str) -> None:
         with open(json_path, 'r', encoding='utf-8') as f:
@@ -29,7 +33,7 @@ class DocxReplacer:
         self.replace_from_json(json_data)
     
     def save(self, output_path: str) -> None:
-        self.document.save(output_path)
+        self.template.save(output_path)
 
 
 def replace_docx_template(docx_path: str, json_data: Dict[str, Any], output_path: str) -> None:
