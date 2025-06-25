@@ -7,7 +7,7 @@ name = "docx-json-replacer"
 version = "0.1.0"
 description = "Replace template text in DOCX files with values from JSON"
 readme = "README.md"
-authors = [{name = "Your Name", email = "your.email@example.com"}]
+authors = [{name = "liuspatt", email = "liuspatt@example.com"}]
 license = {text = "MIT"}
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -30,6 +30,6 @@ dependencies = [
 docx-json-replacer = "docx_json_replacer.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/docx-json-replacer"
-Repository = "https://github.com/yourusername/docx-json-replacer"
-Issues = "https://github.com/yourusername/docx-json-replacer/issues"
+Homepage = "https://github.com/liuspatt/docx-json-replacer"
+Repository = "https://github.com/liuspatt/docx-json-replacer"
+Issues = "https://github.com/liuspatt/docx-json-replacer/issues"

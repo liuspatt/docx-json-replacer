@@ -6,7 +6,10 @@ A Python library and CLI tool for replacing template text in DOCX files with val
 
 ```bash
 pip install docx-json-replacer
+# or
+pip3 install docx-json-replacer
 ```
+
 
 ## Usage
 
@@ -23,7 +26,7 @@ This will create `file_replaced.docx` with template placeholders like `{key}` re
 ```python
 from docx_json_replacer import DocxReplacer
 
-replacer = DocxReplacer("template.docx")
+replacer = DocxReplacer("template.docx")vb       
 replacer.replace_from_json({"name": "John", "date": "2025-06-25"})
 replacer.save("output.docx")
 ```

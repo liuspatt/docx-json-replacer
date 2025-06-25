@@ -1,6 +1,7 @@
 {
   "input.name": "John Doe",
   "input.date": "2025-06-25",
+  "input.fecha": "2025-06-25",
   "input.company": "Example Corp",
   "input.position": "Software Engineer"
 }
