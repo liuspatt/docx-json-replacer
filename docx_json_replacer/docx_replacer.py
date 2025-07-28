@@ -1,6 +1,11 @@
 import json
 from typing import Dict, Any
-from docxtpl import DocxTemplate
+from docxtpl import DocxTemplate, RichText
+
+try:
+    from .utility.html_parse import clean_html_content
+except ImportError:
+    from utility.html_parse import clean_html_content
 
 
 class DocxReplacer:
@@ -8,10 +13,14 @@ class DocxReplacer:
         self.docx_path = docx_path
         self.template = DocxTemplate(docx_path)
     
+    
     def replace_from_json(self, json_data: Dict[str, Any]) -> None:
         # Convert dot notation keys to nested dictionary structure
         context = {}
         for key, value in json_data.items():
+            # Clean HTML content from values
+            cleaned_value = clean_html_content(value)
+            
             if '.' in key:
                 # Split key like "input.name" into ["input", "name"]
                 parts = key.split('.')
@@ -20,9 +29,9 @@ class DocxReplacer:
                     if part not in current:
                         current[part] = {}
                     current = current[part]
-                current[parts[-1]] = value
+                current[parts[-1]] = cleaned_value
             else:
-                context[key] = value
+                context[key] = cleaned_value
         
         # Render the template with the context
         self.template.render(context)

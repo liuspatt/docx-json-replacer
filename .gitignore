@@ -148,3 +148,5 @@ Thumbs.db
 *_replaced.docx
 test_*.docx
 test_*.json
+doc_template.docx
+output.docx
