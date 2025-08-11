@@ -1,0 +1,178 @@
+{
+  "company": "TechCorp International",
+  "date": "2025-01-15",
+  "author": "Data Analytics Team",
+  
+  "financial_summary": [
+    {
+      "cells": ["Metric", "Q1 2024", "Q2 2024", "Q3 2024", "Q4 2024", "Total/Avg"],
+      "style": {"bg": "1F4788", "color": "FFFFFF", "bold": true}
+    },
+    {
+      "cells": ["Revenue ($M)", "45.2", "48.7", "52.3", "58.9", "205.1"],
+      "style": {"bg": "E8F4FD"}
+    },
+    {
+      "cells": ["Gross Margin (%)", "42.5", "43.8", "44.2", "45.1", "43.9"],
+      "style": {"bg": "FFFFFF"}
+    },
+    {
+      "cells": ["Operating Expenses ($M)", "18.3", "19.1", "20.2", "21.5", "79.1"],
+      "style": {"bg": "E8F4FD"}
+    },
+    {
+      "cells": ["EBITDA ($M)", "12.4", "13.8", "15.2", "17.3", "58.7"],
+      "style": {"bg": "D4EDDA", "bold": true}
+    },
+    {
+      "cells": ["Net Profit ($M)", "8.2", "9.5", "10.8", "12.6", "41.1"],
+      "style": {"bg": "D4EDDA", "color": "155724", "bold": true}
+    }
+  ],
+  
+  "department_performance": [
+    {
+      "cells": ["Department", "Headcount", "Budget ($M)", "Utilization (%)", "Performance Score", "Status"],
+      "style": {"bg": "495057", "color": "FFFFFF", "bold": true}
+    },
+    {
+      "cells": ["Engineering", "125", "22.5", "94%", "4.8/5.0", "🟢 Excellent"],
+      "style": {"bg": "F8F9FA"}
+    },
+    {
+      "cells": ["Sales & Marketing", "87", "18.3", "88%", "4.5/5.0", "🟢 Very Good"],
+      "style": {"bg": "FFFFFF"}
+    },
+    {
+      "cells": ["Product Management", "42", "8.7", "91%", "4.6/5.0", "🟢 Very Good"],
+      "style": {"bg": "F8F9FA"}
+    },
+    {
+      "cells": ["Customer Success", "56", "9.2", "85%", "4.3/5.0", "🟡 Good"],
+      "style": {"bg": "FFF3CD"}
+    },
+    {
+      "cells": ["Operations", "38", "6.8", "79%", "3.9/5.0", "🟡 Needs Improvement"],
+      "style": {"bg": "FFF3CD", "color": "856404"}
+    },
+    {
+      "cells": ["HR & Admin", "28", "4.5", "82%", "4.1/5.0", "🟢 Good"],
+      "style": {"bg": "F8F9FA"}
+    }
+  ],
+  
+  "project_portfolio": [
+    {
+      "cells": ["Project", "Priority", "Budget", "Timeline", "Progress", "Risk Level", "Owner"],
+      "style": {"bg": "0D6EFD", "color": "FFFFFF", "bold": true}
+    },
+    {
+      "cells": ["Cloud Migration", "🔴 Critical", "$3.2M", "Jan-Jun 2025", "35%", "Medium", "Sarah Chen"],
+      "style": {"bg": "FFFFFF"}
+    },
+    {
+      "cells": ["AI Integration", "🔴 Critical", "$4.5M", "Feb-Dec 2025", "15%", "High", "Dr. James Liu"],
+      "style": {"bg": "F8D7DA", "color": "721C24"}
+    },
+    {
+      "cells": ["Mobile App v3.0", "🟡 High", "$1.8M", "Mar-Aug 2025", "25%", "Low", "Mike Johnson"],
+      "style": {"bg": "FFFFFF"}
+    },
+    {
+      "cells": ["Security Upgrade", "🔴 Critical", "$2.1M", "Jan-Apr 2025", "60%", "Low", "Anna Security"],
+      "style": {"bg": "D1ECF1"}
+    },
+    {
+      "cells": ["Data Platform", "🟡 High", "$2.8M", "Apr-Oct 2025", "10%", "Medium", "Tom Analytics"],
+      "style": {"bg": "FFFFFF"}
+    },
+    {
+      "cells": ["Customer Portal", "🟢 Medium", "$1.2M", "May-Sep 2025", "5%", "Low", "Lisa UX"],
+      "style": {"bg": "D4EDDA"}
+    }
+  ],
+  
+  "risk_matrix": [
+    {
+      "cells": ["Risk Category", "Impact", "Probability", "Risk Score", "Mitigation Strategy", "Owner"],
+      "style": {"bg": "DC3545", "color": "FFFFFF", "bold": true}
+    },
+    {
+      "cells": ["Cybersecurity Breach", "Critical", "Medium", "9/10", "24/7 SOC, Zero Trust Architecture", "CISO"],
+      "style": {"bg": "F8D7DA"}
+    },
+    {
+      "cells": ["Key Talent Loss", "High", "Medium", "7/10", "Retention bonuses, Career development", "HR"],
+      "style": {"bg": "FFF3CD"}
+    },
+    {
+      "cells": ["Supply Chain Disruption", "High", "Low", "6/10", "Multi-vendor strategy, Buffer stock", "COO"],
+      "style": {"bg": "FFF3CD"}
+    },
+    {
+      "cells": ["Regulatory Compliance", "Medium", "Low", "4/10", "Regular audits, Legal consultation", "Legal"],
+      "style": {"bg": "D1ECF1"}
+    },
+    {
+      "cells": ["Market Competition", "Medium", "High", "6/10", "Innovation, Customer focus", "CEO"],
+      "style": {"bg": "FFF3CD"}
+    }
+  ],
+  
+  "customer_metrics": [
+    {
+      "cells": ["Metric", "Target", "Actual", "Variance", "Trend", "Action Required"],
+      "style": {"bg": "28A745", "color": "FFFFFF", "bold": true}
+    },
+    {
+      "cells": ["NPS Score", "70", "82", "+12", "📈", "Maintain excellence"],
+      "style": {"bg": "D4EDDA"}
+    },
+    {
+      "cells": ["Customer Retention", "90%", "93.5%", "+3.5%", "📈", "Continue current strategy"],
+      "style": {"bg": "D4EDDA"}
+    },
+    {
+      "cells": ["Support Tickets/Month", "<500", "423", "-77", "📈", "Good performance"],
+      "style": {"bg": "D4EDDA"}
+    },
+    {
+      "cells": ["Response Time (hrs)", "<4", "5.2", "+1.2", "📉", "Hire more support staff"],
+      "style": {"bg": "FFF3CD", "color": "856404"}
+    },
+    {
+      "cells": ["Customer Lifetime Value", "$50K", "$58K", "+$8K", "📈", "Upsell opportunities"],
+      "style": {"bg": "D4EDDA"}
+    },
+    {
+      "cells": ["Churn Rate", "<5%", "3.8%", "-1.2%", "📈", "Best in class"],
+      "style": {"bg": "D4EDDA", "bold": true}
+    }
+  ],
+  
+  "nested_data": {
+    "summary": "This demonstrates nested JSON structure support",
+    "details": {
+      "total_revenue": "$205.1M",
+      "total_employees": "376",
+      "offices": "12 global locations"
+    }
+  },
+  
+  "html_table": "<table><tr><th>Region</th><th>Revenue</th><th>Growth</th></tr><tr><td>North America</td><td>$125M</td><td>+22%</td></tr><tr><td>Europe</td><td>$52M</td><td>+18%</td></tr><tr><td>Asia Pacific</td><td>$28M</td><td>+45%</td></tr></table>",
+  
+  "simple_list_table": [
+    ["Product", "Version", "Users", "Revenue"],
+    ["Enterprise Suite", "v5.2", "1,250", "$8.5M"],
+    ["Professional", "v5.2", "3,420", "$5.1M"],
+    ["Starter", "v5.2", "8,930", "$2.2M"]
+  ],
+  
+  "auto_header_table": [
+    {"product": "Analytics Pro", "category": "Data Tools", "price": "$999/mo", "users": 450, "rating": 4.8},
+    {"product": "Cloud Storage", "category": "Infrastructure", "price": "$599/mo", "users": 1200, "rating": 4.6},
+    {"product": "Security Suite", "category": "Security", "price": "$1299/mo", "users": 380, "rating": 4.9}
+  ],
+  
+  "notes": "Complex test demonstrating multiple table formats, nested JSON, HTML parsing, and various styling options."
+}
