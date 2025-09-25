@@ -5,16 +5,15 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="docx-json-replacer",
-    version="0.1.0",
-    author="Your Name",
-    author_email="your.email@example.com",
-    description="Replace template text in DOCX files with values from JSON",
+    version="0.5.1",
+    author="liuspatt",
+    description="Replace template placeholders in DOCX files with JSON data, supports tables",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/yourusername/docx-json-replacer",
+    url="https://github.com/liuspatt/docx-json-replacer",
     packages=find_packages(),
     classifiers=[
-        "Development Status :: 3 - Alpha",
+        "Development Status :: 4 - Beta",
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
@@ -24,10 +23,12 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
     python_requires=">=3.7",
     install_requires=[
-        "python-docx>=1.0.0",
+        "python-docx>=0.8.11",
+        "docxtpl>=0.20.0",
     ],
     entry_points={
         "console_scripts": [
