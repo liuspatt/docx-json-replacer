@@ -1,5 +1,4 @@
 import re
-from docxtpl import RichText
 from typing import Union, List, Any
 
 
@@ -7,9 +6,8 @@ def clean_html_content(value: str) -> str:
     """Convert HTML content to plain text, preserving structure."""
     if not isinstance(value, str):
         return value
-    
-    # For now, just return plain text without RichText objects
-    # since the template might not be configured to handle them
+
+    # Return plain text with formatting markers
     return _clean_plain_text_with_formatting_markers(value)
 
 
@@ -80,97 +78,6 @@ def _clean_plain_text_with_formatting_markers(value: str) -> str:
     value = re.sub(r'[ \t]+', ' ', value)
     
     return value.strip()
-
-
-def _build_rich_text(html: str) -> RichText:
-    """Build a RichText object from HTML content."""
-    rt = RichText()
-    
-    # First, handle block-level elements
-    html = _preprocess_blocks(html)
-    
-    # Parse the HTML and build RichText
-    _parse_html_to_richtext(html, rt)
-    
-    return rt
-
-
-def _preprocess_blocks(html: str) -> str:
-    """Preprocess block-level elements to add proper spacing."""
-    # Add markers for paragraphs
-    html = re.sub(r'<p[^>]*>', '\n\n<p>', html)
-    html = re.sub(r'</p>', '</p>\n\n', html)
-    
-    # Add markers for headings
-    for i in range(1, 7):
-        html = re.sub(rf'<h{i}[^>]*>', rf'\n\n<h{i}>', html, flags=re.IGNORECASE)
-        html = re.sub(rf'</h{i}>', rf'</h{i}>\n\n', html, flags=re.IGNORECASE)
-    
-    # Handle line breaks
-    html = re.sub(r'<br[^>]*/?>', '\n', html)
-    
-    return html
-
-
-def _parse_html_to_richtext(html: str, rt: RichText) -> None:
-    """Parse HTML and add formatted text to RichText object."""
-    # Regular expression to find tags and text
-    pattern = r'(<[^>]+>)|([^<]+)'
-    
-    current_styles = {
-        'bold': False,
-        'italic': False,
-        'underline': False,
-        'strike': False,
-        'heading': False
-    }
-    
-    for match in re.finditer(pattern, html):
-        tag, text = match.groups()
-        
-        if tag:
-            # Handle opening and closing tags
-            tag_lower = tag.lower()
-            
-            # Bold tags
-            if re.match(r'<(b|strong|h[1-6])[^>]*>', tag_lower):
-                current_styles['bold'] = True
-                if re.match(r'<h[1-6][^>]*>', tag_lower):
-                    current_styles['heading'] = True
-            elif re.match(r'</(b|strong|h[1-6])>', tag_lower):
-                current_styles['bold'] = False
-                current_styles['heading'] = False
-            
-            # Italic tags
-            elif re.match(r'<(i|em)[^>]*>', tag_lower):
-                current_styles['italic'] = True
-            elif re.match(r'</(i|em)>', tag_lower):
-                current_styles['italic'] = False
-            
-            # Underline tags
-            elif re.match(r'<u[^>]*>', tag_lower):
-                current_styles['underline'] = True
-            elif re.match(r'</u>', tag_lower):
-                current_styles['underline'] = False
-            
-            # Strike tags
-            elif re.match(r'<(del|s|strike)[^>]*>', tag_lower):
-                current_styles['strike'] = True
-            elif re.match(r'</(del|s|strike)>', tag_lower):
-                current_styles['strike'] = False
-                
-        elif text:
-            # Add text with current formatting
-            text = _convert_html_entities(text)
-            
-            if any(current_styles.values()):
-                rt.add(text, 
-                      bold=current_styles['bold'],
-                      italic=current_styles['italic'],
-                      underline=current_styles['underline'],
-                      strike=current_styles['strike'])
-            else:
-                rt.add(text)
 
 
 def _convert_html_table_plain(value: str) -> str:

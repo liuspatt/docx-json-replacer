@@ -3,7 +3,7 @@ DocxReplacer with table support for docx-json-replacer
 """
 import json
 import re
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 from docx import Document
 from docx.shared import RGBColor
 from docx.oxml import OxmlElement
@@ -181,13 +181,24 @@ class DocxReplacer:
             return
 
         processed_tables = {}
+        split_tables = {}  # For tables that should be split into multiple tables
+
         for paragraph, (key, value) in self.table_placeholders.items():
             table_data = self.table_handler.process_table_data(value)
-            if table_data.get('rows'):
+
+            # Check if this should be split into multiple tables
+            if table_data.get('should_split'):
+                split_tables[paragraph] = table_data.get('split_tables', [])
+            elif table_data.get('rows'):
                 processed_tables[paragraph] = table_data
 
+        # Insert regular tables
         for paragraph, table_data in processed_tables.items():
             self._insert_table_fast(paragraph, table_data)
+
+        # Insert split tables (multiple tables for each placeholder)
+        for paragraph, tables_list in split_tables.items():
+            self._insert_multiple_tables(paragraph, tables_list)
 
     def _insert_table_fast(self, paragraph, table_data: Dict[str, Any]) -> None:
         """Fast table insertion"""
@@ -201,7 +212,16 @@ class DocxReplacer:
         parent = paragraph._element.getparent()
         index = parent.index(paragraph._element)
 
+        # Set paragraph properties to keep with next (table)
+        self._set_paragraph_keep_with_next(paragraph)
+
         table = self.doc.add_table(rows=num_rows, cols=num_cols)
+
+        # Prevent page break before table
+        table.allow_autofit = False
+
+        # Set table properties to prevent page breaks
+        self._set_table_no_page_break(table)
 
         # Try to apply Table Grid style, fall back to default if not available
         try:
@@ -226,6 +246,10 @@ class DocxReplacer:
             default_row_style = row_data.get('style', {})
             row_cells = table_rows[row_idx].cells
 
+            # Prevent page break in the first row
+            if row_idx == 0:
+                self._prevent_row_page_break(table_rows[row_idx])
+
             for col_idx, cell_data in enumerate(cells):
                 if col_idx < len(row_cells):
                     cell = row_cells[col_idx]
@@ -245,7 +269,43 @@ class DocxReplacer:
                     if cell_style:
                         self._apply_cell_style_fast(cell, cell_style)
 
-        parent.insert(index + 1, table._element)
+        # Clear the placeholder paragraph to avoid spacing issues
+        if paragraph.text.strip() == '':
+            # If paragraph is empty after placeholder removal, delete it
+            parent.remove(paragraph._element)
+            parent.insert(index, table._element)
+        else:
+            # Otherwise insert table after the paragraph
+            parent.insert(index + 1, table._element)
+
+    def _insert_multiple_tables(self, paragraph, tables_list: List[Dict[str, Any]]) -> None:
+        """
+        Insert multiple tables for a single placeholder (for split data)
+
+        Args:
+            paragraph: The placeholder paragraph
+            tables_list: List of table data structures to insert
+        """
+        if not tables_list:
+            return
+
+        parent = paragraph._element.getparent()
+        base_index = parent.index(paragraph._element)
+
+        # Insert each table with spacing between them
+        for i, table_data in enumerate(tables_list):
+            if table_data.get('rows'):
+                # Add spacing paragraph between tables (except before first)
+                if i > 0:
+                    spacing_para = self.doc.add_paragraph()
+                    parent.insert(base_index + (i * 2), spacing_para._element)
+
+                # Insert the table
+                self._insert_table_at_index(parent, base_index + (i * 2) + 1, table_data)
+
+        # Remove the placeholder paragraph if it's empty
+        if paragraph.text.strip() == '':
+            parent.remove(paragraph._element)
 
     def _batch_insert_multi_tables(self) -> None:
         """Insert multiple tables for each multi-table placeholder"""
@@ -281,6 +341,12 @@ class DocxReplacer:
 
         table = self.doc.add_table(rows=num_rows, cols=num_cols)
 
+        # Prevent page break before table
+        table.allow_autofit = False
+
+        # Set table properties to prevent page breaks
+        self._set_table_no_page_break(table)
+
         # Try to apply Table Grid style
         try:
             table.style = 'Table Grid'
@@ -300,6 +366,10 @@ class DocxReplacer:
             cells = row_data.get('cells', [])
             default_row_style = row_data.get('style', {})
             row_cells = table_rows[row_idx].cells
+
+            # Prevent page break in the first row
+            if row_idx == 0:
+                self._prevent_row_page_break(table_rows[row_idx])
 
             for col_idx, cell_data in enumerate(cells):
                 if col_idx < len(row_cells):
@@ -553,7 +623,7 @@ class DocxReplacer:
                     height_val = int(float(height) * 20)
 
                 trHeight.set(qn('w:val'), str(height_val))
-                trHeight.set(qn('w:hRule'), 'atLeast')  # Can be 'exact' or 'atLeast'
+                trHeight.set(qn('w:hRule'), 'auto')  # Use 'auto' to allow flexible height without forcing page breaks
                 trPr.append(trHeight)
 
             except (ValueError, AttributeError) as e:
@@ -575,6 +645,82 @@ class DocxReplacer:
                         if len(color_hex) == 6:
                             rgb = tuple(int(color_hex[i:i+2], 16) for i in (0, 2, 4))
                             run.font.color.rgb = RGBColor(*rgb)
+
+    def _prevent_row_page_break(self, row) -> None:
+        """Prevent page break in table row"""
+        try:
+            # Get the table row element
+            tr = row._tr
+
+            # Get or create table row properties
+            trPr = tr.find(qn('w:trPr'))
+            if trPr is None:
+                trPr = OxmlElement('w:trPr')
+                tr.insert(0, trPr)
+
+            # Remove existing cantSplit if present
+            for child in trPr:
+                if child.tag.endswith('cantSplit'):
+                    trPr.remove(child)
+
+            # Add cantSplit property to prevent row from splitting across pages
+            cantSplit = OxmlElement('w:cantSplit')
+            cantSplit.set(qn('w:val'), '1')  # Explicitly set to true
+            trPr.append(cantSplit)
+
+            # Also add tblHeader for first row to keep it with table
+            if hasattr(row, '_index') and row._index == 0:
+                tblHeader = OxmlElement('w:tblHeader')
+                trPr.append(tblHeader)
+
+        except Exception:
+            pass  # Silently ignore if we can't set the property
+
+    def _set_paragraph_keep_with_next(self, paragraph) -> None:
+        """Set paragraph to keep with next element"""
+        try:
+            p = paragraph._element
+            pPr = p.find(qn('w:pPr'))
+            if pPr is None:
+                pPr = OxmlElement('w:pPr')
+                p.insert(0, pPr)
+
+            # Add keepNext property
+            keepNext = OxmlElement('w:keepNext')
+            keepNext.set(qn('w:val'), '1')
+            pPr.append(keepNext)
+
+            # Also add keepLines to prevent splitting
+            keepLines = OxmlElement('w:keepLines')
+            keepLines.set(qn('w:val'), '1')
+            pPr.append(keepLines)
+
+            # Set page break before to false
+            pageBreakBefore = OxmlElement('w:pageBreakBefore')
+            pageBreakBefore.set(qn('w:val'), '0')
+            pPr.append(pageBreakBefore)
+
+        except Exception:
+            pass
+
+    def _set_table_no_page_break(self, table) -> None:
+        """Set table properties to prevent page breaks"""
+        try:
+            tbl = table._tbl
+            tblPr = tbl.find(qn('w:tblPr'))
+            if tblPr is None:
+                tblPr = OxmlElement('w:tblPr')
+                tbl.insert(0, tblPr)
+
+            # Set table to not allow row to break across pages
+            tblPrEx = OxmlElement('w:tblPrEx')
+            cantSplit = OxmlElement('w:cantSplit')
+            cantSplit.set(qn('w:val'), '1')
+            tblPrEx.append(cantSplit)
+            tbl.append(tblPrEx)
+
+        except Exception:
+            pass
 
     def _set_cell_bg_fast(self, cell, color: str) -> None:
         """Fast background setting"""

@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docx-json-replacer"
-version = "0.5.1"
+version = "0.6.4"
 description = "Replace template text in DOCX files with values from JSON"
 readme = "README.md"
 authors = [{name = "liuspatt", email = "liuspatt@example.com"}]
 license = {text = "MIT"}
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -20,11 +20,13 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.7"
 dependencies = [
-    "docxtpl>=0.20.0",
     "python-docx>=0.8.11",
+    "docxcompose>=1.3.0",
 ]
 
 [project.scripts]

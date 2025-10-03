@@ -135,38 +135,47 @@ class TableHandler:
     def process_table_data(data: Union[List[Dict], List[List], str]) -> Dict[str, Any]:
         """
         Process various table data formats into a standardized structure
-        
+
         Args:
             data: Table data in various formats:
                 - List of dicts with 'cells' and optional 'style'
                 - List of lists (simple rows)
                 - List of dicts (data rows)
                 - HTML table string
-        
+
         Returns:
-            Standardized table context for docxtpl
+            Standardized table context for docxtpl. May include 'should_split' flag
+            indicating that this data should be rendered as multiple separate tables.
         """
         # Handle HTML table strings
         if isinstance(data, str) and '<table' in data.lower():
             data = TableHandler.parse_html_table(data)
-        
+
         if not isinstance(data, list) or len(data) == 0:
             return {'rows': []}
-        
+
         first_item = data[0]
-        
+
         # Format 1: List of dicts with 'cells' key (styled table)
         if isinstance(first_item, dict) and 'cells' in first_item:
             return TableHandler._process_styled_table(data)
-        
+
         # Format 2: List of lists (simple table)
         elif isinstance(first_item, list):
             return TableHandler._process_simple_table(data)
-        
+
         # Format 3: List of dicts (data table)
         elif isinstance(first_item, dict):
-            return TableHandler._process_data_table(data)
-        
+            result = TableHandler._process_data_table(data)
+            # Check if the result indicates we should split into multiple tables
+            if result.get('should_split'):
+                # Convert each object into a separate key-value table
+                split_tables = []
+                for obj in result['split_data']:
+                    split_tables.append(TableHandler._create_key_value_table(obj))
+                return {'rows': [], 'should_split': True, 'split_tables': split_tables}
+            return result
+
         return {'rows': []}
     
     @staticmethod
@@ -228,22 +237,74 @@ class TableHandler:
         return {'rows': rows, 'has_style': False}
     
     @staticmethod
-    def _process_data_table(data: List[Dict]) -> Dict[str, Any]:
-        """Process list of dictionaries as table with headers"""
+    def _create_key_value_table(obj: Dict) -> Dict[str, Any]:
+        """
+        Create a key-value table from a single dictionary object
+        Each row shows: [Key] [Value]
+
+        Args:
+            obj: Dictionary to convert to key-value table
+
+        Returns:
+            Table data structure with key-value pairs
+        """
+        rows = []
+
+        # Add header row
+        rows.append({
+            'cells': ['Field', 'Value'],
+            'style': {'bg': '4472C4', 'color': 'FFFFFF', 'bold': True}
+        })
+
+        # Add data rows - one for each key-value pair
+        for key, value in obj.items():
+            rows.append({
+                'cells': [str(key), str(value)],
+                'style': {}
+            })
+
+        return {'rows': rows, 'has_style': True, 'has_headers': True}
+
+    @staticmethod
+    def _process_data_table(data: List[Dict], field_threshold: int = 5) -> Dict[str, Any]:
+        """
+        Process list of dictionaries as table with headers
+
+        Args:
+            data: List of dictionaries to convert to table
+            field_threshold: If objects have more than this many fields, create separate tables
+                           for each object instead of a single table with all objects as rows
+
+        Returns:
+            Table data structure, or a special marker indicating multiple tables needed
+        """
         if not data:
             return {'rows': []}
-        
+
         # Extract headers from first item keys
         headers = list(data[0].keys())
-        
+        num_fields = len(headers)
+
+        # Check if we should create separate tables for each object
+        # This is useful for arrays like joint_obligor_company where each object has many fields
+        # Always split into N tables when objects have many fields, regardless of array length
+        if num_fields > field_threshold:
+            # Return a marker indicating this should be processed as multiple tables
+            # Each object will get its own key-value table
+            return {
+                'rows': [],
+                'should_split': True,
+                'split_data': data
+            }
+
         rows = []
-        
+
         # Add header row with default styling
         rows.append({
             'cells': headers,
             'style': {'bg': '4472C4', 'color': 'FFFFFF', 'bold': True}
         })
-        
+
         # Add data rows
         for item in data:
             cells = [str(item.get(key, '')) for key in headers]
@@ -251,7 +312,7 @@ class TableHandler:
                 'cells': cells,
                 'style': {}
             })
-        
+
         return {'rows': rows, 'has_style': True, 'has_headers': True}
     
     @staticmethod

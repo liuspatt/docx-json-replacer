@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="docx-json-replacer",
-    version="0.6.0",
+    version="0.6.4",
     author="liuspatt",
     description="Replace template placeholders in DOCX files with JSON data, supports tables with HTML formatting and cell-level styling",
     long_description=long_description,
