@@ -1,23 +1,29 @@
-# docx-json-replacer
+# DOCX JSON Replacer
 
-Replace template placeholders in DOCX files with JSON data. Supports text replacement in paragraphs, table cells, and dynamic table generation.
+A powerful Python library for replacing template placeholders in DOCX files with JSON data. Supports advanced features like dynamic tables, HTML formatting in cells, and individual cell styling.
 
-## Features
+[![PyPI version](https://badge.fury.io/py/docx-json-replacer.svg)](https://badge.fury.io/py/docx-json-replacer)
+[![Python Support](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-- Replace `{{placeholder}}` markers in DOCX files with JSON data
-- **Handles placeholders in paragraphs AND table cells**
-- Supports keys with dots (e.g., `part.borrower_name`)
-- Automatic HTML tag cleaning
-- Dynamic table generation from JSON arrays
-- Table styling support (colors, bold, italic)
+## ✨ Features
 
-## Installation
+- 📝 **Simple placeholder replacement** in paragraphs and tables
+- 📊 **Dynamic table generation** from JSON data
+- 🎨 **Advanced table styling** with row-level and cell-level customization
+- 🔤 **HTML formatting support** in table cells (`<b>`, `<i>`, `<u>`, `<br>`, `<p>`)
+- 🎯 **Smart HTML tag handling** for malformed or duplicate tags
+- 🚀 **Batch processing** capabilities
+- 💻 **Command-line interface** for easy automation
+- 🐍 **Simple Python API** for integration
+
+## 📦 Installation
 
 ```bash
 pip install docx-json-replacer
 ```
 
-## Usage
+## 🚀 Quick Start
 
 ### Command Line
 
@@ -39,82 +45,203 @@ replacer = DocxReplacer('template.docx')
 
 # Replace with JSON data
 json_data = {
-    "customer_name": "John Doe",
-    "date": "2024-01-01",
-    "amount": "$1,000.00"
+    "name": "John Doe",
+    "company": "Acme Corp",
+    "table_data": [
+        {
+            "cells": ["Header 1", "Header 2", "Header 3"],
+            "style": {"bg": "4472C4", "color": "FFFFFF", "bold": True}
+        },
+        {
+            "cells": ["Row 1 Col 1", "Row 1 Col 2", "Row 1 Col 3"]
+        }
+    ]
 }
-replacer.replace_from_json(json_data)
 
-# Save the result
+replacer.replace_from_json(json_data)
 replacer.save('output.docx')
 ```
 
-## Template Format
+## 📄 Template Format
 
-In your DOCX file, use double curly braces for placeholders:
+Use double curly braces for placeholders:
 
 ```
-Dear {{customer_name}},
+Dear {{name}},
 
-Your invoice dated {{date}} for {{amount}} is ready.
+Welcome to {{company}}!
+
+{{table_data}}
 ```
 
 Placeholders work in:
 - Regular paragraphs
 - Table cells
 - Headers and footers
+- Nested structures with dots (e.g., `{{client.name}}`)
 
-## JSON Data Format
+## 📊 Table Support
 
-### Simple Text Replacement
-
+### Basic Table (List of Lists)
 ```json
 {
-    "customer_name": "John Doe",
-    "date": "2024-01-01",
-    "amount": "$1,000.00"
+  "simple_table": [
+    ["Header 1", "Header 2"],
+    ["Row 1 Col 1", "Row 1 Col 2"]
+  ]
 }
 ```
 
-### Keys with Dots
-
+### Styled Table with Row-Level Styling
 ```json
 {
-    "part.borrower_name": "ACME Corp",
-    "part.borrower_address": "123 Main St"
+  "styled_table": [
+    {
+      "cells": ["Header 1", "Header 2", "Header 3"],
+      "style": {
+        "bg": "4472C4",
+        "color": "FFFFFF",
+        "bold": true
+      }
+    },
+    {
+      "cells": ["Data 1", "Data 2", "Data 3"],
+      "style": {
+        "bg": "F2F2F2"
+      }
+    }
+  ]
 }
 ```
 
-### Table Data
-
-For dynamic table generation, use arrays:
-
+### Individual Cell Styling (v0.6.0+)
 ```json
 {
-    "invoice_items": [
-        {"cells": ["Item 1", "2", "$50.00"]},
-        {"cells": ["Item 2", "3", "$75.00"]}
-    ]
+  "cell_styled_table": [
+    {
+      "cells": ["Red Cell", "Green Cell", "Blue Cell"],
+      "cell_styles": [
+        {"bg": "FF0000", "color": "FFFFFF", "bold": true},
+        {"bg": "00FF00", "color": "000000", "italic": true},
+        {"bg": "0000FF", "color": "FFFFFF", "underline": true}
+      ]
+    }
+  ]
 }
 ```
 
-With styling:
-
+### Mixed Row and Cell Styling
 ```json
 {
-    "styled_table": [
+  "mixed_table": [
+    {
+      "cells": ["Default", "Default", "Special"],
+      "style": {"bg": "E7E6E6"},
+      "cell_styles": [
+        null,
+        null,
+        {"bg": "FFFF00", "bold": true}
+      ]
+    }
+  ]
+}
+```
+
+### HTML Formatting in Cells (v0.6.0+)
+```json
+{
+  "html_table": [
+    {
+      "cells": [
+        "Normal text",
+        "<b>Bold text</b>",
+        "<i>Italic</i> and <u>underline</u>"
+      ]
+    },
+    {
+      "cells": [
+        "Line 1<br>Line 2<br>Line 3",
+        "<b>Title</b><br><i>Subtitle</i>",
+        "<p>Paragraph 1</p><p>Paragraph 2</p>"
+      ]
+    }
+  ]
+}
+```
+
+## 🎨 Style Properties
+
+| Property | Description | Example |
+|----------|-------------|---------|
+| `bg` | Background color (hex without #) | `"4472C4"` |
+| `color` | Text color (hex without #) | `"FFFFFF"` |
+| `bold` | Bold text | `true`/`false` |
+| `italic` | Italic text | `true`/`false` |
+| `underline` | Underlined text | `true`/`false` |
+
+### Style Priority Order
+1. Inline cell object style (highest priority)
+2. `cell_styles` array entry
+3. Row `style` (lowest priority)
+
+## 🔧 Advanced Usage
+
+### Processing Multiple Files
+```python
+from docx_json_replacer import DocxReplacer
+import json
+
+# Process multiple documents
+templates = ['template1.docx', 'template2.docx']
+data_files = ['data1.json', 'data2.json']
+
+for template, data_file in zip(templates, data_files):
+    with open(data_file, 'r') as f:
+        data = json.load(f)
+
+    replacer = DocxReplacer(template)
+    replacer.replace_from_json(data)
+    replacer.save(f'output_{template}')
+```
+
+### Real-World Example: Invoice Generation
+```python
+from docx_json_replacer import DocxReplacer
+
+invoice_data = {
+    "invoice_number": "INV-2024-001",
+    "date": "2024-01-15",
+    "client.name": "ABC Corporation",
+    "client.address": "123 Business St.",
+    "items": [
         {
-            "cells": ["Header 1", "Header 2"],
-            "style": {"bg": "4472C4", "color": "FFFFFF", "bold": true}
+            "cells": ["Item", "Quantity", "Price", "Total"],
+            "style": {"bg": "333333", "color": "FFFFFF", "bold": True}
         },
         {
-            "cells": ["Data 1", "Data 2"]
+            "cells": ["Widget A", "10", "$10.00", "$100.00"]
+        },
+        {
+            "cells": ["Widget B", "5", "$20.00", "$100.00"]
+        },
+        {
+            "cells": ["<b>Total</b>", "", "", "<b>$200.00</b>"],
+            "cell_styles": [
+                {"bg": "E7E6E6", "bold": True},
+                {"bg": "E7E6E6"},
+                {"bg": "E7E6E6"},
+                {"bg": "E7E6E6", "bold": True}
+            ]
         }
     ]
 }
+
+replacer = DocxReplacer('invoice_template.docx')
+replacer.replace_from_json(invoice_data)
+replacer.save('invoice_INV-2024-001.docx')
 ```
 
-## Complete Example
+## 📋 Complete Example
 
 ### Template (template.docx)
 ```
@@ -124,6 +251,8 @@ Address: {{client.address}}
 
 Items:
 {{items}}
+
+Terms: {{terms}}
 ```
 
 ### Data (data.json)
@@ -133,10 +262,20 @@ Items:
     "client.name": "ABC Corporation",
     "client.address": "456 Business Ave",
     "items": [
-        {"cells": ["Product", "Qty", "Price"], "style": {"bold": true}},
-        {"cells": ["Widget A", "10", "$100"]},
-        {"cells": ["Widget B", "5", "$200"]}
-    ]
+        {
+            "cells": ["Product", "Quantity", "Price"],
+            "style": {"bg": "4472C4", "color": "FFFFFF", "bold": true}
+        },
+        {
+            "cells": ["<b>Widget A</b>", "10", "$100"],
+            "cell_styles": [{"bg": "E7E6E6"}, null, null]
+        },
+        {
+            "cells": ["<b>Widget B</b>", "5", "$200"],
+            "cell_styles": [{"bg": "E7E6E6"}, null, null]
+        }
+    ],
+    "terms": "Payment due in 30 days"
 }
 ```
 
@@ -145,12 +284,44 @@ Items:
 docx-json-replacer template.docx data.json -o contract_2024_001.docx
 ```
 
-## Requirements
+## 🆕 What's New in v0.6.0
+
+- **HTML Support in Tables**: Format text with `<b>`, `<i>`, `<u>`, `<br>`, and `<p>` tags
+- **Cell-Level Styling**: Individual styling for each cell in a table
+- **Smart Tag Handling**: Properly handles malformed or duplicate HTML tags
+- **Improved Performance**: Optimized table generation and styling
+
+## 📋 Requirements
 
 - Python 3.7+
-- python-docx
-- docxtpl
+- python-docx >= 0.8.11
+- docxcompose >= 1.3.0
 
-## License
+## 🤝 Contributing
 
-MIT
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- Built with [python-docx](https://python-docx.readthedocs.io/)
+- Table composition with [docxcompose](https://github.com/4teamwork/docxcompose)
+
+## 📞 Support
+
+For issues and feature requests, please use the [GitHub issue tracker](https://github.com/liuspatt/docx-json-replacer/issues).
+
+## 📚 Links
+
+- [PyPI Package](https://pypi.org/project/docx-json-replacer/)
+- [GitHub Repository](https://github.com/liuspatt/docx-json-replacer)
+- [Documentation](https://github.com/liuspatt/docx-json-replacer#readme)

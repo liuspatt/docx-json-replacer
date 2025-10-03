@@ -2,8 +2,7 @@
 Table handling module for docx-json-replacer.
 Provides functionality to create and style tables from JSON data.
 """
-from typing import Dict, Any, List, Union, Optional
-from docxtpl import DocxTemplate, RichText
+from typing import Dict, Any, List, Union
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
@@ -14,25 +13,54 @@ class TableHandler:
     @staticmethod
     def is_table_data(value: Any) -> bool:
         """Check if the value represents table data"""
+        # Check for multi-table format with 'list' flag
+        if isinstance(value, dict) and value.get('list') == True:
+            return True
+
         if not isinstance(value, list):
             return False
-        
+
         if len(value) == 0:
             return False
-            
+
         # Check if it's a list of dictionaries with 'cells' key
         first_item = value[0]
         if isinstance(first_item, dict) and 'cells' in first_item:
             return True
-            
+
         # Check if it's a list of lists (simple table)
         if isinstance(first_item, list):
             return True
-            
+
         # Check if it's a list of dictionaries (data table)
         if isinstance(first_item, dict):
             return True
-            
+
+        return False
+
+    @staticmethod
+    def is_multi_table_data(value: Any) -> bool:
+        """Check if the value represents multiple tables"""
+        # Format 1: Object with 'list: true' flag
+        if isinstance(value, dict) and value.get('list') == True:
+            return True
+
+        # Format 2: Check if it's an array of arrays where each sub-array is table data
+        if isinstance(value, list) and len(value) > 0:
+            first_item = value[0]
+            # If the first item is itself a valid table structure (list of rows)
+            if isinstance(first_item, list) and len(first_item) > 0:
+                # Check if the first item's first element looks like table data
+                first_row = first_item[0]
+                if isinstance(first_row, (list, dict)):
+                    # This might be [[table1_rows], [table2_rows]]
+                    # Verify by checking if all items are table-like
+                    return all(
+                        isinstance(item, list) and len(item) > 0 and
+                        isinstance(item[0], (list, dict))
+                        for item in value[:min(2, len(value))]  # Check first 2 items
+                    )
+
         return False
     
     @staticmethod
@@ -64,6 +92,45 @@ class TableHandler:
         
         return rows
     
+    @staticmethod
+    def process_multi_table_data(data: Any) -> List[Dict[str, Any]]:
+        """
+        Process data that represents multiple tables
+
+        Args:
+            data: Multi-table data in one of these formats:
+                - Dict with 'list: true' and 'tables' array
+                - Array of table data arrays
+
+        Returns:
+            List of table contexts for each table
+        """
+        tables = []
+
+        # Format 1: Object with 'list' flag
+        if isinstance(data, dict) and data.get('list') == True:
+            tables_data = data.get('tables', [])
+            for table_data in tables_data:
+                processed = TableHandler.process_table_data(table_data)
+                if processed.get('rows'):
+                    tables.append(processed)
+
+        # Format 2: Direct array of table arrays
+        elif isinstance(data, list):
+            # Check if this is multiple tables (array of arrays)
+            if data and isinstance(data[0], list) and data[0] and isinstance(data[0][0], (list, dict)):
+                for table_data in data:
+                    processed = TableHandler.process_table_data(table_data)
+                    if processed.get('rows'):
+                        tables.append(processed)
+            else:
+                # Single table - process normally
+                processed = TableHandler.process_table_data(data)
+                if processed.get('rows'):
+                    tables.append(processed)
+
+        return tables
+
     @staticmethod
     def process_table_data(data: Union[List[Dict], List[List], str]) -> Dict[str, Any]:
         """
@@ -104,24 +171,48 @@ class TableHandler:
     
     @staticmethod
     def _process_styled_table(data: List[Dict]) -> Dict[str, Any]:
-        """Process table with styling information"""
+        """Process table with styling information - supports both row-level and cell-level styles"""
         rows = []
         for row_data in data:
-            row = {
-                'cells': row_data.get('cells', []),
-                'style': row_data.get('style', {})
-            }
-            
-            # Process style information
-            if 'style' in row_data and isinstance(row_data['style'], dict):
-                style = row_data['style']
-                row['bg'] = style.get('bg', '')
-                row['color'] = style.get('color', '')
-                row['bold'] = style.get('bold', False)
-                row['italic'] = style.get('italic', False)
-            
+            # Handle different formats
+            if isinstance(row_data.get('cells'), list):
+                cells = []
+                cell_styles = row_data.get('cell_styles', [])
+                row_style = row_data.get('style', {})
+
+                for idx, cell_content in enumerate(row_data['cells']):
+                    # Check if this is already a dict with content and style
+                    if isinstance(cell_content, dict) and 'content' in cell_content:
+                        cells.append(cell_content)
+                    else:
+                        # Build cell with individual style or row style
+                        cell = {'content': str(cell_content)}
+
+                        # Apply cell-specific style if available
+                        if idx < len(cell_styles) and cell_styles[idx]:
+                            cell['style'] = cell_styles[idx]
+                        # Otherwise use row style if available
+                        elif row_style:
+                            cell['style'] = row_style
+                        else:
+                            cell['style'] = {}
+
+                        cells.append(cell)
+
+                row = {
+                    'cells': cells,
+                    'style': row_style  # Keep row style for compatibility
+                }
+            else:
+                # Legacy format support
+                row = {
+                    'cells': [{'content': str(c), 'style': row_data.get('style', {})}
+                             for c in row_data.get('cells', [])],
+                    'style': row_data.get('style', {})
+                }
+
             rows.append(row)
-        
+
         return {'rows': rows, 'has_style': True}
     
     @staticmethod

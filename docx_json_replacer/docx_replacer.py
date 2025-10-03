@@ -25,6 +25,7 @@ class DocxReplacer:
         self.doc = Document(docx_path)
         self.table_handler = TableHandler()
         self.table_placeholders = {}
+        self.multi_table_placeholders = {}  # New: for multiple tables
         self._value_cache = {}
         self._table_check_cache = {}
 
@@ -46,6 +47,9 @@ class DocxReplacer:
         # Insert dynamic tables for table data
         self._batch_insert_tables()
 
+        # Insert multiple tables for multi-table data
+        self._batch_insert_multi_tables()
+
     def _compile_patterns(self, json_data: Dict[str, Any]) -> Dict[str, Tuple[re.Pattern, re.Pattern]]:
         """Pre-compile regex patterns for all placeholders"""
         patterns = {}
@@ -61,11 +65,20 @@ class DocxReplacer:
         processed = {}
 
         for key, value in json_data.items():
+            is_multi_table = self.table_handler.is_multi_table_data(value)
             is_table = self._check_is_table(value)
 
-            if is_table:
+            if is_multi_table:
+                processed[key] = {
+                    'is_table': False,  # Don't treat as single table
+                    'is_multi_table': True,
+                    'original': value,
+                    'processed': None
+                }
+            elif is_table:
                 processed[key] = {
                     'is_table': True,
+                    'is_multi_table': False,
                     'original': value,
                     'processed': None
                 }
@@ -73,6 +86,7 @@ class DocxReplacer:
                 cleaned = clean_html_content(value) if isinstance(value, str) else str(value)
                 processed[key] = {
                     'is_table': False,
+                    'is_multi_table': False,
                     'original': value,
                     'processed': cleaned
                 }
@@ -105,7 +119,13 @@ class DocxReplacer:
                 if pattern.search(new_text) or pattern_spaced.search(new_text):
                     value_data = processed_values[key]
 
-                    if value_data['is_table']:
+                    if value_data.get('is_multi_table'):
+                        # Store for multiple table insertion
+                        self.multi_table_placeholders[paragraph] = (key, value_data['original'])
+                        new_text = pattern.sub('', new_text)
+                        new_text = pattern_spaced.sub('', new_text)
+                        modified = True
+                    elif value_data.get('is_table'):
                         # Store for table insertion
                         self.table_placeholders[paragraph] = (key, value_data['original'])
                         new_text = pattern.sub('', new_text)
@@ -182,26 +202,363 @@ class DocxReplacer:
         index = parent.index(paragraph._element)
 
         table = self.doc.add_table(rows=num_rows, cols=num_cols)
-        table.style = 'Table Grid'
+
+        # Try to apply Table Grid style, fall back to default if not available
+        try:
+            table.style = 'Table Grid'
+        except KeyError:
+            # If 'Table Grid' style doesn't exist, try alternative styles or use default
+            try:
+                # Try common table style alternatives
+                for style_name in ['TableGrid', 'Light Grid', 'Light List', 'Normal Table']:
+                    try:
+                        table.style = style_name
+                        break
+                    except KeyError:
+                        continue
+            except:
+                # If all else fails, leave the default style
+                pass
 
         table_rows = table.rows
         for row_idx, row_data in enumerate(rows):
             cells = row_data.get('cells', [])
-            style = row_data.get('style', {})
+            default_row_style = row_data.get('style', {})
             row_cells = table_rows[row_idx].cells
 
-            for col_idx, cell_text in enumerate(cells):
+            for col_idx, cell_data in enumerate(cells):
                 if col_idx < len(row_cells):
                     cell = row_cells[col_idx]
-                    cell.text = str(cell_text)
 
-                    if style:
-                        self._apply_cell_style_fast(cell, style)
+                    # Handle both old format (string) and new format (dict with content and style)
+                    if isinstance(cell_data, dict):
+                        cell_text = cell_data.get('content', '')
+                        cell_style = cell_data.get('style', default_row_style)
+                    else:
+                        cell_text = str(cell_data)
+                        cell_style = default_row_style
+
+                    # Process HTML content in cell text
+                    self._set_cell_content_with_formatting(cell, str(cell_text))
+
+                    # Apply cell-specific style or row style
+                    if cell_style:
+                        self._apply_cell_style_fast(cell, cell_style)
 
         parent.insert(index + 1, table._element)
 
+    def _batch_insert_multi_tables(self) -> None:
+        """Insert multiple tables for each multi-table placeholder"""
+        if not self.multi_table_placeholders:
+            return
+
+        for paragraph, (key, value) in self.multi_table_placeholders.items():
+            tables_data = self.table_handler.process_multi_table_data(value)
+
+            if tables_data:
+                parent = paragraph._element.getparent()
+                base_index = parent.index(paragraph._element)
+
+                # Insert each table with optional spacing between them
+                for i, table_data in enumerate(tables_data):
+                    if table_data.get('rows'):
+                        # Add spacing paragraph between tables (except before first)
+                        if i > 0:
+                            spacing_para = self.doc.add_paragraph()
+                            parent.insert(base_index + (i * 2), spacing_para._element)
+
+                        # Insert the table
+                        self._insert_table_at_index(parent, base_index + (i * 2) + 1, table_data)
+
+    def _insert_table_at_index(self, parent, index: int, table_data: Dict[str, Any]) -> None:
+        """Insert a table at a specific index in the parent element"""
+        rows = table_data['rows']
+        num_rows = len(rows)
+        num_cols = len(rows[0]['cells']) if rows and 'cells' in rows[0] else 0
+
+        if num_rows == 0 or num_cols == 0:
+            return
+
+        table = self.doc.add_table(rows=num_rows, cols=num_cols)
+
+        # Try to apply Table Grid style
+        try:
+            table.style = 'Table Grid'
+        except KeyError:
+            try:
+                for style_name in ['TableGrid', 'Light Grid', 'Light List', 'Normal Table']:
+                    try:
+                        table.style = style_name
+                        break
+                    except KeyError:
+                        continue
+            except:
+                pass
+
+        table_rows = table.rows
+        for row_idx, row_data in enumerate(rows):
+            cells = row_data.get('cells', [])
+            default_row_style = row_data.get('style', {})
+            row_cells = table_rows[row_idx].cells
+
+            for col_idx, cell_data in enumerate(cells):
+                if col_idx < len(row_cells):
+                    cell = row_cells[col_idx]
+
+                    # Handle both old format (string) and new format (dict with content and style)
+                    if isinstance(cell_data, dict):
+                        cell_text = cell_data.get('content', '')
+                        cell_style = cell_data.get('style', default_row_style)
+                    else:
+                        cell_text = str(cell_data)
+                        cell_style = default_row_style
+
+                    # Process HTML content in cell text
+                    self._set_cell_content_with_formatting(cell, str(cell_text))
+
+                    # Apply cell-specific style or row style
+                    if cell_style:
+                        self._apply_cell_style_fast(cell, cell_style)
+
+        parent.insert(index, table._element)
+
+    def _set_cell_content_with_formatting(self, cell, content: str) -> None:
+        """Set cell content with HTML formatting support"""
+        import re
+
+        # Clear existing content
+        cell.text = ""
+        paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+
+        # Process the content to handle HTML tags
+        parts = self._parse_html_for_cell(content)
+
+        for part in parts:
+            run = paragraph.add_run(part['text'])
+            if part.get('bold'):
+                run.bold = True
+            if part.get('italic'):
+                run.italic = True
+            if part.get('underline'):
+                run.underline = True
+
+    def _parse_html_for_cell(self, html_text: str) -> list:
+        """Parse HTML text and return list of formatted text parts"""
+        import re
+
+        # Handle line breaks
+        html_text = html_text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+
+        # Handle paragraphs
+        html_text = re.sub(r'<p[^>]*>', '', html_text)
+        html_text = html_text.replace('</p>', '\n')
+
+        # Parse HTML more carefully by processing character by character
+        parts = []
+        current_text = []
+        current_format = {'bold': False, 'italic': False, 'underline': False}
+        i = 0
+
+        while i < len(html_text):
+            if html_text[i] == '<':
+                # Find the end of the tag
+                tag_end = html_text.find('>', i)
+                if tag_end == -1:
+                    # Malformed tag, treat as text
+                    current_text.append(html_text[i])
+                    i += 1
+                    continue
+
+                tag = html_text[i:tag_end+1]
+                tag_content = tag[1:-1].lower()
+
+                # Check if we have accumulated text to save
+                if current_text:
+                    text = ''.join(current_text)
+                    if text.strip():
+                        part = {'text': text}
+                        if current_format['bold']:
+                            part['bold'] = True
+                        if current_format['italic']:
+                            part['italic'] = True
+                        if current_format['underline']:
+                            part['underline'] = True
+                        parts.append(part)
+                    current_text = []
+
+                # Handle opening tags
+                if tag_content in ['b', 'strong']:
+                    # If bold is already active, treat duplicate opening tag as CLOSING tag
+                    if current_format['bold']:
+                        # Save current bold text
+                        if current_text:
+                            text = ''.join(current_text)
+                            if text.strip():
+                                part = {'text': text, 'bold': True}
+                                if current_format['italic']:
+                                    part['italic'] = True
+                                if current_format['underline']:
+                                    part['underline'] = True
+                                parts.append(part)
+                            current_text = []
+                        # Turn OFF bold (duplicate opening tag acts as closing)
+                        current_format['bold'] = False
+                    else:
+                        # Turn ON bold
+                        current_format['bold'] = True
+                elif tag_content in ['i', 'em']:
+                    # If italic is already active, treat duplicate opening tag as CLOSING tag
+                    if current_format['italic']:
+                        # Save current italic text
+                        if current_text:
+                            text = ''.join(current_text)
+                            if text.strip():
+                                part = {'text': text}
+                                if current_format['bold']:
+                                    part['bold'] = True
+                                part['italic'] = True
+                                if current_format['underline']:
+                                    part['underline'] = True
+                                parts.append(part)
+                            current_text = []
+                        # Turn OFF italic
+                        current_format['italic'] = False
+                    else:
+                        # Turn ON italic
+                        current_format['italic'] = True
+                elif tag_content == 'u':
+                    # If underline is already active, treat duplicate opening tag as CLOSING tag
+                    if current_format['underline']:
+                        # Save current underline text
+                        if current_text:
+                            text = ''.join(current_text)
+                            if text.strip():
+                                part = {'text': text}
+                                if current_format['bold']:
+                                    part['bold'] = True
+                                if current_format['italic']:
+                                    part['italic'] = True
+                                part['underline'] = True
+                                parts.append(part)
+                            current_text = []
+                        # Turn OFF underline
+                        current_format['underline'] = False
+                    else:
+                        # Turn ON underline
+                        current_format['underline'] = True
+
+                # Handle closing tags
+                elif tag_content in ['/b', '/strong']:
+                    current_format['bold'] = False
+                elif tag_content in ['/i', '/em']:
+                    current_format['italic'] = False
+                elif tag_content == '/u':
+                    current_format['underline'] = False
+
+                i = tag_end + 1
+
+            else:
+                # Regular text
+                current_text.append(html_text[i])
+                i += 1
+
+        # Add any remaining text
+        if current_text:
+            text = ''.join(current_text)
+            if text.strip():
+                part = {'text': text}
+                if current_format['bold']:
+                    part['bold'] = True
+                if current_format['italic']:
+                    part['italic'] = True
+                if current_format['underline']:
+                    part['underline'] = True
+                parts.append(part)
+
+        # If no parts were created, just return the cleaned text
+        if not parts:
+            cleaned_text = re.sub(r'<[^>]+>', '', html_text)
+            return [{'text': cleaned_text}]
+
+        return parts
+
     def _apply_cell_style_fast(self, cell, style: Dict[str, Any]) -> None:
-        """Fast cell styling"""
+        """Fast cell styling including width and height"""
+        from docx.shared import Inches, Pt, Cm
+
+        # Apply width if specified
+        if width := style.get('width'):
+            try:
+                if isinstance(width, str):
+                    if width.endswith('in'):
+                        cell.width = Inches(float(width[:-2]))
+                    elif width.endswith('pt'):
+                        cell.width = Pt(float(width[:-2]))
+                    elif width.endswith('cm'):
+                        cell.width = Cm(float(width[:-2]))
+                    elif width.endswith('px'):
+                        # Convert pixels to points (1px ≈ 0.75pt)
+                        cell.width = Pt(float(width[:-2]) * 0.75)
+                    elif width.endswith('%'):
+                        # For percentage, we'd need table width - for now skip
+                        pass
+                    else:
+                        # Assume inches if no unit
+                        cell.width = Inches(float(width))
+                else:
+                    # Numeric value - assume inches
+                    cell.width = Inches(float(width))
+            except (ValueError, AttributeError) as e:
+                pass  # Ignore invalid width values
+
+        # Apply height (for row height, applied at cell level)
+        if height := style.get('height'):
+            try:
+                # Get the row through the cell
+                tc = cell._tc
+                tr = tc.getparent()  # Get the table row element
+
+                # Create height property
+                from docx.oxml import OxmlElement
+                from docx.oxml.ns import qn
+
+                # Check if row already has properties
+                trPr = tr.find(qn('w:trPr'))
+                if trPr is None:
+                    trPr = OxmlElement('w:trPr')
+                    tr.insert(0, trPr)
+
+                # Remove existing height if present
+                for child in trPr:
+                    if child.tag.endswith('trHeight'):
+                        trPr.remove(child)
+
+                trHeight = OxmlElement('w:trHeight')
+
+                # Convert height value to twips (1/20 of a point)
+                if isinstance(height, str):
+                    if height.endswith('pt'):
+                        height_val = int(float(height[:-2]) * 20)
+                    elif height.endswith('in'):
+                        height_val = int(float(height[:-2]) * 1440)
+                    elif height.endswith('cm'):
+                        height_val = int(float(height[:-2]) * 567)
+                    elif height.endswith('px'):
+                        height_val = int(float(height[:-2]) * 15)  # 1px ≈ 15 twips
+                    else:
+                        # Assume points if no unit
+                        height_val = int(float(height) * 20)
+                else:
+                    # Numeric value - assume points
+                    height_val = int(float(height) * 20)
+
+                trHeight.set(qn('w:val'), str(height_val))
+                trHeight.set(qn('w:hRule'), 'atLeast')  # Can be 'exact' or 'atLeast'
+                trPr.append(trHeight)
+
+            except (ValueError, AttributeError) as e:
+                pass  # Ignore invalid height values
+
         if bg := style.get('bg'):
             self._set_cell_bg_fast(cell, bg)
 
