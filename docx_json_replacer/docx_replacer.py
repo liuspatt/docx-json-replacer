@@ -106,74 +106,206 @@ class DocxReplacer:
         return result
 
     def _process_paragraphs(self, patterns: Dict, processed_values: Dict) -> None:
-        """Process all document paragraphs"""
+        """Process all document paragraphs while preserving formatting"""
         for paragraph in self.doc.paragraphs:
             text = paragraph.text
             if not text or '{{' not in text:
                 continue
 
-            modified = False
-            new_text = text
+            # Check if we need to handle table placeholders
+            table_placeholder_found = False
+            multi_table_placeholder_found = False
 
             for key, (pattern, pattern_spaced) in patterns.items():
-                if pattern.search(new_text) or pattern_spaced.search(new_text):
+                if pattern.search(text) or pattern_spaced.search(text):
                     value_data = processed_values[key]
 
                     if value_data.get('is_multi_table'):
                         # Store for multiple table insertion
                         self.multi_table_placeholders[paragraph] = (key, value_data['original'])
-                        new_text = pattern.sub('', new_text)
-                        new_text = pattern_spaced.sub('', new_text)
-                        modified = True
+                        multi_table_placeholder_found = True
+                        break
                     elif value_data.get('is_table'):
                         # Store for table insertion
                         self.table_placeholders[paragraph] = (key, value_data['original'])
-                        new_text = pattern.sub('', new_text)
-                        new_text = pattern_spaced.sub('', new_text)
-                        modified = True
-                    else:
+                        table_placeholder_found = True
+                        break
+
+            # If it's a table placeholder, clear the paragraph
+            if table_placeholder_found or multi_table_placeholder_found:
+                paragraph.text = ''
+                continue
+
+            # Process runs to preserve formatting for non-table replacements
+            self._process_paragraph_runs(paragraph, patterns, processed_values)
+
+    def _process_paragraph_runs(self, paragraph, patterns: Dict, processed_values: Dict) -> None:
+        """Process runs within a paragraph to preserve formatting"""
+        # Collect all runs and their text
+        runs = paragraph.runs
+        if not runs:
+            # If there are no runs but there is text, create one run with the text
+            if paragraph.text:
+                text = paragraph.text
+                paragraph.text = ''
+                run = paragraph.add_run(text)
+                runs = [run]
+            else:
+                return
+
+        # First, check if placeholders are split across runs
+        # This can happen when Word splits text into multiple runs
+        full_text = paragraph.text
+        if '{{' in full_text:
+            # Check if any complete placeholders exist in the full text
+            has_complete_placeholders = False
+            for key, (pattern, pattern_spaced) in patterns.items():
+                if pattern.search(full_text) or pattern_spaced.search(full_text):
+                    has_complete_placeholders = True
+                    break
+
+            # If we have complete placeholders and multiple runs, merge and re-split
+            if has_complete_placeholders and len(runs) > 1:
+                # Save the formatting from the first run that has a placeholder start
+                formatting_run = None
+                for run in runs:
+                    if '{{' in run.text:
+                        formatting_run = run
+                        break
+                if not formatting_run:
+                    formatting_run = runs[0]
+
+                # Store the original formatting
+                original_bold = formatting_run.bold
+                original_italic = formatting_run.italic
+                original_underline = formatting_run.underline
+                original_font_size = formatting_run.font.size
+                original_font_name = formatting_run.font.name
+                original_font_color = None
+                if formatting_run.font.color.rgb:
+                    original_font_color = formatting_run.font.color.rgb
+
+                # Process the full text
+                new_text = full_text
+                for key, (pattern, pattern_spaced) in patterns.items():
+                    if key not in processed_values:
+                        continue
+                    value_data = processed_values[key]
+                    if not value_data.get('is_table') and not value_data.get('is_multi_table'):
+                        # Regular text replacement
+                        replacement = value_data['processed']
+                        new_text = pattern.sub(replacement, new_text)
+                        new_text = pattern_spaced.sub(replacement, new_text)
+
+                # Remove any remaining unmatched placeholders
+                unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
+                new_text = unmatched_pattern.sub('', new_text)
+
+                # Clear existing runs and create a new one with the replaced text
+                paragraph.clear()
+                new_run = paragraph.add_run(new_text)
+
+                # Apply the preserved formatting
+                if original_bold is not None:
+                    new_run.bold = original_bold
+                if original_italic is not None:
+                    new_run.italic = original_italic
+                if original_underline is not None:
+                    new_run.underline = original_underline
+                if original_font_size is not None:
+                    new_run.font.size = original_font_size
+                if original_font_name is not None:
+                    new_run.font.name = original_font_name
+                if original_font_color is not None:
+                    new_run.font.color.rgb = original_font_color
+                return
+
+        # Process each run individually (for cases where placeholders are within single runs)
+        for run in runs:
+            if not run.text:
+                continue
+
+            original_text = run.text
+            new_text = original_text
+            modified = False
+
+            # Store the original formatting
+            original_bold = run.bold
+            original_italic = run.italic
+            original_underline = run.underline
+            original_font_size = run.font.size
+            original_font_name = run.font.name
+            original_font_color = None
+            if run.font.color.rgb:
+                original_font_color = run.font.color.rgb
+
+            # Replace placeholders in this run
+            for key, (pattern, pattern_spaced) in patterns.items():
+                if key not in processed_values:
+                    continue
+
+                if pattern.search(new_text) or pattern_spaced.search(new_text):
+                    value_data = processed_values[key]
+
+                    if not value_data.get('is_table') and not value_data.get('is_multi_table'):
                         # Regular text replacement
                         replacement = value_data['processed']
                         new_text = pattern.sub(replacement, new_text)
                         new_text = pattern_spaced.sub(replacement, new_text)
                         modified = True
 
+            # Remove any remaining unmatched placeholders
+            unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
+            if unmatched_pattern.search(new_text):
+                new_text = unmatched_pattern.sub('', new_text)
+                modified = True
+
             if modified:
-                paragraph.text = new_text
+                # Update the run text while preserving formatting
+                run.text = new_text
+
+                # Restore the original formatting
+                if original_bold is not None:
+                    run.bold = original_bold
+                if original_italic is not None:
+                    run.italic = original_italic
+                if original_underline is not None:
+                    run.underline = original_underline
+                if original_font_size is not None:
+                    run.font.size = original_font_size
+                if original_font_name is not None:
+                    run.font.name = original_font_name
+                if original_font_color is not None:
+                    run.font.color.rgb = original_font_color
 
     def _process_tables(self, patterns: Dict, processed_values: Dict) -> None:
-        """Process all table cells in the document"""
+        """Process all table cells in the document while preserving formatting"""
         for table in self.doc.tables:
-            for row in table.rows:
-                for cell in row.cells:
+            for row_idx, row in enumerate(table.rows):
+                for cell_idx, cell in enumerate(row.cells):
                     # Process each paragraph in the cell
                     for paragraph in cell.paragraphs:
                         text = paragraph.text
                         if not text or '{{' not in text:
                             continue
 
-                        modified = False
-                        new_text = text
-
+                        # Check if we have table placeholders (which can't be inserted in cells)
+                        has_table_placeholder = False
                         for key, (pattern, pattern_spaced) in patterns.items():
-                            if pattern.search(new_text) or pattern_spaced.search(new_text):
+                            if key not in processed_values:
+                                continue
+                            if pattern.search(text) or pattern_spaced.search(text):
                                 value_data = processed_values[key]
+                                if value_data.get('is_table') or value_data.get('is_multi_table'):
+                                    has_table_placeholder = True
+                                    # Replace with placeholder text
+                                    paragraph.text = '[Table data - see document]'
+                                    break
 
-                                if value_data['is_table']:
-                                    # For table data in cells, just clear the placeholder
-                                    # (inserting tables inside cells is complex)
-                                    new_text = pattern.sub('[Table data - see document]', new_text)
-                                    new_text = pattern_spaced.sub('[Table data - see document]', new_text)
-                                    modified = True
-                                else:
-                                    # Regular text replacement
-                                    replacement = value_data['processed']
-                                    new_text = pattern.sub(replacement, new_text)
-                                    new_text = pattern_spaced.sub(replacement, new_text)
-                                    modified = True
-
-                        if modified:
-                            paragraph.text = new_text
+                        # If no table placeholder, process runs to preserve formatting
+                        if not has_table_placeholder:
+                            # Use the same run processing method we use for regular paragraphs
+                            self._process_paragraph_runs(paragraph, patterns, processed_values)
 
     def _batch_insert_tables(self) -> None:
         """Insert all tables in batch"""
@@ -219,9 +351,26 @@ class DocxReplacer:
 
         # Prevent page break before table
         table.allow_autofit = False
+        table.autofit = False  # Disable autofit to preserve column widths
 
         # Set table properties to prevent page breaks
         self._set_table_no_page_break(table)
+
+        # Set table grid column widths from first row's cell styles
+        if rows and rows[0]:
+            first_row = rows[0]
+
+            # Extract cell styles from the first row's cells
+            cell_styles = []
+            if 'cells' in first_row:
+                for cell in first_row['cells']:
+                    if isinstance(cell, dict) and 'style' in cell:
+                        cell_styles.append(cell['style'])
+                    else:
+                        cell_styles.append({})
+
+            if cell_styles:
+                self._set_table_grid_widths(table, cell_styles)
 
         # Try to apply Table Grid style, fall back to default if not available
         try:
@@ -240,6 +389,13 @@ class DocxReplacer:
                 # If all else fails, leave the default style
                 pass
 
+        # Collect column widths from first row if available
+        column_widths = []
+        if rows and rows[0].get('cell_styles'):
+            for cell_style in rows[0]['cell_styles']:
+                if 'width' in cell_style:
+                    column_widths.append(cell_style['width'])
+
         table_rows = table.rows
         for row_idx, row_data in enumerate(rows):
             cells = row_data.get('cells', [])
@@ -249,6 +405,27 @@ class DocxReplacer:
             # Prevent page break in the first row
             if row_idx == 0:
                 self._prevent_row_page_break(table_rows[row_idx])
+
+                # Set column widths based on first row
+                if column_widths:
+                    from docx.shared import Cm, Inches, Pt
+                    for col_idx, width in enumerate(column_widths):
+                        if col_idx < len(table.columns):
+                            try:
+                                if isinstance(width, str):
+                                    if width.endswith('cm'):
+                                        table.columns[col_idx].width = Cm(float(width[:-2]))
+                                    elif width.endswith('in'):
+                                        table.columns[col_idx].width = Inches(float(width[:-2]))
+                                    elif width.endswith('pt'):
+                                        table.columns[col_idx].width = Pt(float(width[:-2]))
+                                    else:
+                                        # Assume cm if no unit
+                                        table.columns[col_idx].width = Cm(float(width))
+                                else:
+                                    table.columns[col_idx].width = Cm(float(width))
+                            except Exception as e:
+                                print(f"Error setting column width: {e}")
 
             for col_idx, cell_data in enumerate(cells):
                 if col_idx < len(row_cells):
@@ -343,9 +520,26 @@ class DocxReplacer:
 
         # Prevent page break before table
         table.allow_autofit = False
+        table.autofit = False  # Disable autofit to preserve column widths
 
         # Set table properties to prevent page breaks
         self._set_table_no_page_break(table)
+
+        # Set table grid column widths from first row's cell styles
+        if rows and rows[0]:
+            first_row = rows[0]
+
+            # Extract cell styles from the first row's cells
+            cell_styles = []
+            if 'cells' in first_row:
+                for cell in first_row['cells']:
+                    if isinstance(cell, dict) and 'style' in cell:
+                        cell_styles.append(cell['style'])
+                    else:
+                        cell_styles.append({})
+
+            if cell_styles:
+                self._set_table_grid_widths(table, cell_styles)
 
         # Try to apply Table Grid style
         try:
@@ -361,6 +555,13 @@ class DocxReplacer:
             except:
                 pass
 
+        # Collect column widths from first row if available
+        column_widths = []
+        if rows and rows[0].get('cell_styles'):
+            for cell_style in rows[0]['cell_styles']:
+                if 'width' in cell_style:
+                    column_widths.append(cell_style['width'])
+
         table_rows = table.rows
         for row_idx, row_data in enumerate(rows):
             cells = row_data.get('cells', [])
@@ -370,6 +571,27 @@ class DocxReplacer:
             # Prevent page break in the first row
             if row_idx == 0:
                 self._prevent_row_page_break(table_rows[row_idx])
+
+                # Set column widths based on first row
+                if column_widths:
+                    from docx.shared import Cm, Inches, Pt
+                    for col_idx, width in enumerate(column_widths):
+                        if col_idx < len(table.columns):
+                            try:
+                                if isinstance(width, str):
+                                    if width.endswith('cm'):
+                                        table.columns[col_idx].width = Cm(float(width[:-2]))
+                                    elif width.endswith('in'):
+                                        table.columns[col_idx].width = Inches(float(width[:-2]))
+                                    elif width.endswith('pt'):
+                                        table.columns[col_idx].width = Pt(float(width[:-2]))
+                                    else:
+                                        # Assume cm if no unit
+                                        table.columns[col_idx].width = Cm(float(width))
+                                else:
+                                    table.columns[col_idx].width = Cm(float(width))
+                            except Exception as e:
+                                print(f"Error setting column width: {e}")
 
             for col_idx, cell_data in enumerate(cells):
                 if col_idx < len(row_cells):
@@ -553,8 +775,11 @@ class DocxReplacer:
         return parts
 
     def _apply_cell_style_fast(self, cell, style: Dict[str, Any]) -> None:
-        """Fast cell styling including width and height"""
+        """Fast cell styling including width, height, borders, font size, and alignment"""
         from docx.shared import Inches, Pt, Cm
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
 
         # Apply width if specified
         if width := style.get('width'):
@@ -589,9 +814,6 @@ class DocxReplacer:
                 tr = tc.getparent()  # Get the table row element
 
                 # Create height property
-                from docx.oxml import OxmlElement
-                from docx.oxml.ns import qn
-
                 # Check if row already has properties
                 trPr = tr.find(qn('w:trPr'))
                 if trPr is None:
@@ -629,16 +851,76 @@ class DocxReplacer:
             except (ValueError, AttributeError) as e:
                 pass  # Ignore invalid height values
 
+        # Apply padding/margins if specified
+        if padding := style.get('padding'):
+            self._set_cell_padding(cell, padding)
+
+        # Apply borders if specified
+        if borders := style.get('borders'):
+            self._set_cell_borders(cell, borders)
+
         if bg := style.get('bg'):
             self._set_cell_bg_fast(cell, bg)
 
-        if any(style.get(k) for k in ['bold', 'italic', 'color']):
+        # Apply horizontal text alignment
+        # Handle 'align' for horizontal alignment
+        if align := style.get('align'):
+            align_lower = align.lower()
+            for paragraph in cell.paragraphs:
+                if align_lower == 'center':
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                elif align_lower == 'right':
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                elif align_lower == 'left':
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                elif align_lower == 'justify':
+                    paragraph.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+                # If align is not recognized, don't change it
+
+        # Apply vertical alignment
+        # Handle 'valign' for vertical alignment
+        if valign := style.get('valign'):
+            valign_lower = valign.lower()
+
+            # Get cell's XML properties
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+
+            # Remove existing vAlign if present
+            for child in list(tcPr):
+                if child.tag.endswith('vAlign'):
+                    tcPr.remove(child)
+
+            # Create vAlign element with proper value
+            vAlign = OxmlElement('w:vAlign')
+
+            # Map valign values to Word's vAlign values
+            if valign_lower in ['center', 'middle']:
+                vAlign.set(qn('w:val'), 'center')
+            elif valign_lower in ['top']:
+                vAlign.set(qn('w:val'), 'top')
+            elif valign_lower in ['bottom']:
+                vAlign.set(qn('w:val'), 'bottom')
+            else:
+                # For any unrecognized value (including 'left'), default to top
+                # since 'left' is not a valid vertical alignment
+                vAlign.set(qn('w:val'), 'top')
+
+            tcPr.append(vAlign)
+
+        # Apply font properties
+        font_size = style.get('font_size')
+        if any(style.get(k) for k in ['bold', 'italic', 'color']) or font_size:
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
                     if style.get('bold'):
                         run.bold = True
                     if style.get('italic'):
                         run.italic = True
+
+                    # Apply font size
+                    if font_size:
+                        run.font.size = Pt(font_size)
 
                     if color_hex := style.get('color'):
                         color_hex = color_hex.replace('#', '')
@@ -667,11 +949,6 @@ class DocxReplacer:
             cantSplit = OxmlElement('w:cantSplit')
             cantSplit.set(qn('w:val'), '1')  # Explicitly set to true
             trPr.append(cantSplit)
-
-            # Also add tblHeader for first row to keep it with table
-            if hasattr(row, '_index') and row._index == 0:
-                tblHeader = OxmlElement('w:tblHeader')
-                trPr.append(tblHeader)
 
         except Exception:
             pass  # Silently ignore if we can't set the property
@@ -703,9 +980,81 @@ class DocxReplacer:
         except Exception:
             pass
 
+    def _set_table_grid_widths(self, table, cell_styles) -> None:
+        """Set table grid column widths"""
+        try:
+            from docx.shared import Cm, Inches, Pt
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+
+            tbl = table._tbl
+
+            # First, ensure we have tblPr element
+            tblPr = tbl.find(qn('w:tblPr'))
+            if tblPr is None:
+                tblPr = OxmlElement('w:tblPr')
+                tbl.insert(0, tblPr)
+
+            # Find or create tblGrid - it should be right after tblPr
+            tblGrid = tbl.find(qn('w:tblGrid'))
+            if tblGrid is None:
+                tblGrid = OxmlElement('w:tblGrid')
+                # Insert after tblPr (position 1 if tblPr exists at 0)
+                tbl.insert(1, tblGrid)
+
+            # Clear existing gridCol elements
+            for child in list(tblGrid):
+                if child.tag.endswith('gridCol'):
+                    tblGrid.remove(child)
+
+            # Add new gridCol elements with widths
+            # Also set column widths directly on the table columns
+            for i, style in enumerate(cell_styles):
+                gridCol = OxmlElement('w:gridCol')
+                width_set = False
+
+                if 'width' in style:
+                    width = style['width']
+                    # Convert to twips (1/20 point, 1 cm = 567 twips)
+                    if isinstance(width, str):
+                        if width.endswith('cm'):
+                            width_twips = int(float(width[:-2]) * 567)
+                            # Also set column width if we have access to columns
+                            if i < len(table.columns):
+                                table.columns[i].width = Cm(float(width[:-2]))
+                        elif width.endswith('in'):
+                            width_twips = int(float(width[:-2]) * 1440)
+                            if i < len(table.columns):
+                                table.columns[i].width = Inches(float(width[:-2]))
+                        elif width.endswith('pt'):
+                            width_twips = int(float(width[:-2]) * 20)
+                            if i < len(table.columns):
+                                table.columns[i].width = Pt(float(width[:-2]))
+                        else:
+                            # Assume cm
+                            width_twips = int(float(width) * 567)
+                            if i < len(table.columns):
+                                table.columns[i].width = Cm(float(width))
+                    else:
+                        # Assume cm
+                        width_twips = int(float(width) * 567)
+                        if i < len(table.columns):
+                            table.columns[i].width = Cm(float(width))
+
+                    gridCol.set(qn('w:w'), str(width_twips))
+                    width_set = True
+
+                tblGrid.append(gridCol)
+
+        except Exception as e:
+            pass  # Silently fail to avoid debug output
+
     def _set_table_no_page_break(self, table) -> None:
         """Set table properties to prevent page breaks"""
         try:
+            from docx.oxml import OxmlElement
+            from docx.oxml.ns import qn
+
             tbl = table._tbl
             tblPr = tbl.find(qn('w:tblPr'))
             if tblPr is None:
@@ -719,8 +1068,138 @@ class DocxReplacer:
             tblPrEx.append(cantSplit)
             tbl.append(tblPrEx)
 
+            # Remove existing tblLayout if present
+            for child in list(tblPr):
+                if child.tag.endswith('tblLayout'):
+                    tblPr.remove(child)
+
+            # Set table layout to fixed to preserve column widths
+            tblLayout = OxmlElement('w:tblLayout')
+            tblLayout.set(qn('w:type'), 'fixed')
+            tblPr.append(tblLayout)
+
         except Exception:
             pass
+
+    def _set_cell_padding(self, cell, padding_config: Dict[str, Any]) -> None:
+        """Set cell padding/margins with configuration"""
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+
+        # Remove existing margins
+        for child in list(tcPr):
+            if child.tag.endswith('tcMar'):
+                tcPr.remove(child)
+
+        # Create new margins element
+        tcMar = OxmlElement('w:tcMar')
+
+        # Convert padding values to twips (1 point = 20 twips)
+        # Default Word padding is usually around 0.08" (115 twips)
+
+        # Helper function to convert various units to twips
+        def to_twips(value):
+            if isinstance(value, str):
+                if value.endswith('pt'):
+                    return int(float(value[:-2]) * 20)
+                elif value.endswith('cm'):
+                    return int(float(value[:-2]) * 567)
+                elif value.endswith('in'):
+                    return int(float(value[:-2]) * 1440)
+                elif value.endswith('px'):
+                    return int(float(value[:-2]) * 15)
+                else:
+                    # Assume points if no unit
+                    return int(float(value) * 20)
+            else:
+                # Numeric value - assume points
+                return int(float(value) * 20)
+
+        # Set each margin
+        sides = {
+            'top': 'top',
+            'bottom': 'bottom',
+            'left': 'start',  # In Word XML, left is 'start'
+            'right': 'end'     # In Word XML, right is 'end'
+        }
+
+        for padding_side, word_side in sides.items():
+            if padding_side in padding_config:
+                margin_val = to_twips(padding_config[padding_side])
+                margin_element = OxmlElement(f'w:{word_side}')
+                margin_element.set(qn('w:w'), str(margin_val))
+                margin_element.set(qn('w:type'), 'dxa')  # dxa = twips
+                tcMar.append(margin_element)
+
+        # If we have any margins set, add the tcMar element
+        if len(tcMar):
+            tcPr.append(tcMar)
+
+    def _set_cell_borders(self, cell, border_config: Dict[str, Any]) -> None:
+        """Set cell borders with configuration"""
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+
+        # Remove existing borders
+        for child in list(tcPr):
+            if child.tag.endswith('tcBorders'):
+                tcPr.remove(child)
+
+        # Create new borders element
+        tcBorders = OxmlElement('w:tcBorders')
+
+        # Check if we have individual border specifications
+        has_individual_borders = any(key in border_config for key in ['top', 'bottom', 'left', 'right'])
+
+        if has_individual_borders:
+            # Handle individual border specifications
+            for side in ['top', 'bottom', 'left', 'right']:
+                if side in border_config:
+                    side_config = border_config[side]
+                    # Handle both dict and direct value formats
+                    if isinstance(side_config, dict):
+                        color = side_config.get('color', '000000').replace('#', '')
+                        size = str(int(side_config.get('size', 0.5) * 8))
+                        style = side_config.get('style', 'single')
+                    else:
+                        # If it's just a number, use it as size
+                        color = '000000'
+                        size = str(int(side_config * 8)) if isinstance(side_config, (int, float)) else '4'
+                        style = 'single'
+
+                    if size != '0':  # Only add border if size is not 0
+                        border = OxmlElement(f'w:{side}')
+                        border.set(qn('w:val'), style)
+                        border.set(qn('w:sz'), size)
+                        border.set(qn('w:color'), color)
+                        border.set(qn('w:space'), '0')
+                        tcBorders.append(border)
+        else:
+            # Use the old format (uniform borders)
+            border_color = border_config.get('color', '000000').replace('#', '')
+            border_size = str(int(border_config.get('size', 0.5) * 8))
+            border_style = border_config.get('style', 'single')
+
+            # Define which borders to apply
+            borders_to_apply = border_config.get('sides', ['top', 'bottom', 'left', 'right'])
+
+            # Create border elements
+            for side in borders_to_apply:
+                if side in ['top', 'bottom', 'left', 'right']:
+                    border = OxmlElement(f'w:{side}')
+                    border.set(qn('w:val'), border_style)
+                    border.set(qn('w:sz'), border_size)
+                    border.set(qn('w:color'), border_color)
+                    border.set(qn('w:space'), '0')
+                    tcBorders.append(border)
+
+        tcPr.append(tcBorders)
 
     def _set_cell_bg_fast(self, cell, color: str) -> None:
         """Fast background setting"""

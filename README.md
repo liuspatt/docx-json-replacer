@@ -9,9 +9,12 @@ A powerful Python library for replacing template placeholders in DOCX files with
 ## ✨ Features
 
 - 📝 **Simple placeholder replacement** in paragraphs and tables
+- 🎨 **Formatting preservation** - Maintains font styles, sizes, and colors from templates (v0.7.0+)
 - 📊 **Dynamic table generation** from JSON data
+- 📐 **Cell padding/margins** - Configurable cell spacing and margins (v0.7.0+)
 - 🎨 **Advanced table styling** with row-level and cell-level customization
 - 🔤 **HTML formatting support** in table cells (`<b>`, `<i>`, `<u>`, `<br>`, `<p>`)
+- 📚 **Multiple tables support** - Insert multiple tables from a single placeholder (v0.7.0+)
 - 🎯 **Smart HTML tag handling** for malformed or duplicate tags
 - 🚀 **Batch processing** capabilities
 - 💻 **Command-line interface** for easy automation
@@ -171,6 +174,7 @@ Placeholders work in:
 
 ## 🎨 Style Properties
 
+### Text Formatting
 | Property | Description | Example |
 |----------|-------------|---------|
 | `bg` | Background color (hex without #) | `"4472C4"` |
@@ -178,6 +182,21 @@ Placeholders work in:
 | `bold` | Bold text | `true`/`false` |
 | `italic` | Italic text | `true`/`false` |
 | `underline` | Underlined text | `true`/`false` |
+| `font_size` | Font size in points | `10`, `12`, `14` |
+
+### Cell Layout (v0.7.0+)
+| Property | Description | Example |
+|----------|-------------|---------|
+| `width` | Cell width | `"4cm"`, `"2in"`, `"100pt"` |
+| `height` | Cell height | `"2cm"`, `"1in"`, `"50pt"` |
+| `align` | Horizontal alignment | `"left"`, `"center"`, `"right"` |
+| `valign` | Vertical alignment | `"top"`, `"center"`, `"bottom"` |
+| `padding` | Cell padding/margins | `{"top": 10, "bottom": 10, "left": 5, "right": 5}` |
+
+### Borders (v0.7.0+)
+| Property | Description | Example |
+|----------|-------------|---------|
+| `borders` | Cell borders | `{"top": {"size": 1, "color": "000000"}, "bottom": {...}}` |
 
 ### Style Priority Order
 1. Inline cell object style (highest priority)
@@ -284,8 +303,16 @@ Terms: {{terms}}
 docx-json-replacer template.docx data.json -o contract_2024_001.docx
 ```
 
-## 🆕 What's New in v0.6.0
+## 🆕 What's New
 
+### v0.7.0 (Latest)
+- **Formatting Preservation**: Maintains font styles, sizes, and colors when replacing placeholders
+- **Cell Padding/Margins**: Full control over cell spacing with configurable padding
+- **Multiple Tables Support**: Insert multiple tables from a single placeholder
+- **Enhanced Borders**: Individual border configuration for each cell side
+- **Bug Fixes**: Fixed formatting loss in table cells and regular paragraphs
+
+### v0.6.0
 - **HTML Support in Tables**: Format text with `<b>`, `<i>`, `<u>`, `<br>`, and `<p>` tags
 - **Cell-Level Styling**: Individual styling for each cell in a table
 - **Smart Tag Handling**: Properly handles malformed or duplicate HTML tags

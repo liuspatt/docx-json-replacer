@@ -151,3 +151,7 @@ test_*.json
 doc_template.docx
 output.docx
 run.md
+template_*.json
+
+# Virtual environments
+test_env/

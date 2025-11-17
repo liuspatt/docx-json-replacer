@@ -110,10 +110,42 @@ class TableHandler:
         # Format 1: Object with 'list' flag
         if isinstance(data, dict) and data.get('list') == True:
             tables_data = data.get('tables', [])
-            for table_data in tables_data:
-                processed = TableHandler.process_table_data(table_data)
-                if processed.get('rows'):
-                    tables.append(processed)
+
+            # Check if tables_data contains rows that should be grouped into tables
+            # If each item has 'cells' key, they might be rows to group
+            if tables_data and all(isinstance(item, dict) and 'cells' in item for item in tables_data):
+                # Look for natural breaks in the table data to split into multiple tables
+                # We'll split when we see "Apartado 1." again (indicating a new table)
+                current_table_rows = []
+
+                for row_data in tables_data:
+                    # Check if this is the start of a new table (Apartado 1.)
+                    if (row_data.get('cells') and
+                        len(row_data['cells']) > 0 and
+                        isinstance(row_data['cells'][0], str) and
+                        row_data['cells'][0].strip() == "Apartado 1."):
+
+                        # If we have accumulated rows, create a table from them
+                        if current_table_rows:
+                            processed = TableHandler._process_styled_table(current_table_rows)
+                            if processed.get('rows'):
+                                tables.append(processed)
+                            current_table_rows = []
+
+                    # Add this row to the current table
+                    current_table_rows.append(row_data)
+
+                # Don't forget the last table
+                if current_table_rows:
+                    processed = TableHandler._process_styled_table(current_table_rows)
+                    if processed.get('rows'):
+                        tables.append(processed)
+            else:
+                # Original behavior: each item is a separate table
+                for table_data in tables_data:
+                    processed = TableHandler.process_table_data(table_data)
+                    if processed.get('rows'):
+                        tables.append(processed)
 
         # Format 2: Direct array of table arrays
         elif isinstance(data, list):

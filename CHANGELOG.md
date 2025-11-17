@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-01-17
+
+### Fixed
+- **Removed Automatic Table Header Pinning**
+  - Removed functionality that automatically marked the first table row as a repeating header
+  - Tables no longer automatically repeat their first row across pages
+  - Simplified table row page break prevention logic
+  - Fixed issue where header row pinning was not working correctly due to non-existent row attributes
+
+### Changed
+- Simplified `_prevent_row_page_break` method to remove unused header pinning parameter
+- Removed `is_header_row` parameter from table insertion methods
+
+## [0.7.0] - 2025-01-15
+
+### Added
+- **Formatting Preservation**: Placeholders now maintain their original formatting when replaced
+  - Preserves bold, italic, underline, font size, font name, and font color
+  - Works for both regular paragraphs and table cells
+  - Handles placeholders split across multiple runs in Word documents
+
+- **Cell Padding/Margins Support**: Added configurable padding for table cells
+  - New `padding` property with top, bottom, left, right configuration
+  - Supports multiple units: points (default), cm, inches, pixels
+  - Properly sets Word XML cell margins (`tcMar`)
+
+- **Enhanced Style Properties**
+  - Added `font_size` property for cell text
+  - Added `width` and `height` properties for cells with multiple unit support
+  - Added `valign` property for vertical alignment (top, center, bottom)
+  - Individual border configuration for each cell side
+
+### Fixed
+- **Fixed Formatting Loss Issues**
+  - Fixed loss of formatting when replacing placeholders in regular paragraphs
+  - Fixed loss of formatting when replacing placeholders in table cells
+  - Fixed handling of placeholders split across multiple Word runs
+
+- **Improved Placeholder Handling**
+  - Unmatched placeholders are now removed instead of remaining in output
+  - Better handling of complex placeholder patterns
+  - More robust processing of nested table data
+
+### Changed
+- Refactored `_process_paragraphs` to work with runs instead of plain text
+- Refactored `_process_tables` to reuse run-processing logic
+- Added new `_process_paragraph_runs` method for formatting preservation
+- Added new `_set_cell_padding` method for margin configuration
+- Improved error handling and fallback behavior for invalid style values
+
 ## [0.6.4] - 2025-10-03
 
 ### Fixed
