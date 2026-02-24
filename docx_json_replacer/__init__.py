@@ -1,5 +1,7 @@
 from .docx_replacer import DocxReplacer, replace_docx_template
 from .table_handler import TableHandler
+from .formatting_handler import FormattingHandler
+from .image_handler import ImageHandler
 
-__version__ = "0.7.1"
-__all__ = ["DocxReplacer", "replace_docx_template", "TableHandler"]
+__version__ = "0.9.0"
+__all__ = ["DocxReplacer", "replace_docx_template", "TableHandler", "FormattingHandler", "ImageHandler"]

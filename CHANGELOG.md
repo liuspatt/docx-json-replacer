@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-01-04
+
+### Added
+- **Inline Images in Text Replacements**
+  - New `[dx-img:key]` syntax for embedding images within text
+  - Reference-based approach: define image separately, use key in text
+  - Works in both regular paragraphs and table cells
+  - Supports width and height configuration on referenced images
+  - Example: `"text": "Here is a logo [dx-img:my_logo] in the text"`
+  - Image definition: `"my_logo": {"type": "image", "data": "base64...", "width": "2cm"}`
+
+- **ImageHandler Enhancements**
+  - New `has_inline_images()` method to detect inline image tags
+  - New `find_inline_images()` method to extract image keys from text
+  - New `INLINE_IMAGE_PATTERN` regex for parsing `[dx-img:key]` tags
+
+### Changed
+- DocxReplacer now stores JSON data reference for inline image lookups
+- Paragraph run processing now handles mixed text and image content
+- Table cell content processing supports inline images with HTML formatting
+
+## [0.7.2] - 2025-01-17
+
+### Added
+- **`"borders": "none"` Support**
+  - New shorthand syntax to remove all borders from a cell
+  - Sets all four sides (top, bottom, left, right) to `style="nil"`
+  - More convenient than specifying `size: 0` for each side individually
+  - Example: `"borders": "none"` removes all cell borders
+
+### Fixed
+- **Fixed Border Handling for Individual Sides**
+  - Borders with `size: 0` now explicitly set to `style="nil"` to properly remove them
+  - Fixes issue where borders with size 0 were skipped instead of explicitly removed
+  - Word now correctly removes individual borders instead of showing inherited table borders
+  - Empty `tcBorders` elements no longer added to document XML
+
+### Changed
+- Improved border configuration handling to support string values
+- Enhanced `_set_cell_borders` method to handle "none" as a special case
+- Border elements now only appended when they contain child elements
+
 ## [0.7.1] - 2025-01-17
 
 ### Fixed

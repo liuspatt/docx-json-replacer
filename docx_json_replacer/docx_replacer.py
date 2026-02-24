@@ -12,9 +12,13 @@ from docx.oxml.ns import qn
 try:
     from .utility.html_parse import clean_html_content
     from .table_handler import TableHandler
+    from .formatting_handler import FormattingHandler
+    from .image_handler import ImageHandler
 except ImportError:
     from utility.html_parse import clean_html_content
     from table_handler import TableHandler
+    from formatting_handler import FormattingHandler
+    from image_handler import ImageHandler
 
 
 class DocxReplacer:
@@ -24,13 +28,21 @@ class DocxReplacer:
         self.docx_path = docx_path
         self.doc = Document(docx_path)
         self.table_handler = TableHandler()
+        self.formatting_handler = FormattingHandler()
+        self.image_handler = ImageHandler()
         self.table_placeholders = {}
-        self.multi_table_placeholders = {}  # New: for multiple tables
+        self.multi_table_placeholders = {}  # For multiple tables
+        self.formatted_content_placeholders = {}  # For formatted content (titles, headings, bullets)
+        self.image_placeholders = {}  # For single images
+        self.image_list_placeholders = {}  # For lists of images
         self._value_cache = {}
         self._table_check_cache = {}
 
     def replace_from_json(self, json_data: Dict[str, Any]) -> None:
         """Replace placeholders in paragraphs AND tables"""
+
+        # Store json_data for inline image lookups
+        self._json_data = json_data
 
         # Pre-compile patterns
         patterns = self._compile_patterns(json_data)
@@ -50,6 +62,15 @@ class DocxReplacer:
         # Insert multiple tables for multi-table data
         self._batch_insert_multi_tables()
 
+        # Insert formatted content (titles, headings, bullets)
+        self._batch_insert_formatted_content()
+
+        # Insert single images
+        self._batch_insert_images()
+
+        # Insert image lists
+        self._batch_insert_image_lists()
+
     def _compile_patterns(self, json_data: Dict[str, Any]) -> Dict[str, Tuple[re.Pattern, re.Pattern]]:
         """Pre-compile regex patterns for all placeholders"""
         patterns = {}
@@ -67,11 +88,37 @@ class DocxReplacer:
         for key, value in json_data.items():
             is_multi_table = self.table_handler.is_multi_table_data(value)
             is_table = self._check_is_table(value)
+            is_formatted = self.formatting_handler.has_formatting_tags(value)
+            is_image = self.image_handler.is_image_data(value)
+            is_image_list = self.image_handler.is_image_list_data(value)
 
-            if is_multi_table:
+            if is_image_list:
+                processed[key] = {
+                    'is_table': False,
+                    'is_multi_table': False,
+                    'is_formatted': False,
+                    'is_image': False,
+                    'is_image_list': True,
+                    'original': value,
+                    'processed': None
+                }
+            elif is_image:
+                processed[key] = {
+                    'is_table': False,
+                    'is_multi_table': False,
+                    'is_formatted': False,
+                    'is_image': True,
+                    'is_image_list': False,
+                    'original': value,
+                    'processed': None
+                }
+            elif is_multi_table:
                 processed[key] = {
                     'is_table': False,  # Don't treat as single table
                     'is_multi_table': True,
+                    'is_formatted': False,
+                    'is_image': False,
+                    'is_image_list': False,
                     'original': value,
                     'processed': None
                 }
@@ -79,14 +126,32 @@ class DocxReplacer:
                 processed[key] = {
                     'is_table': True,
                     'is_multi_table': False,
+                    'is_formatted': False,
+                    'is_image': False,
+                    'is_image_list': False,
+                    'original': value,
+                    'processed': None
+                }
+            elif is_formatted:
+                processed[key] = {
+                    'is_table': False,
+                    'is_multi_table': False,
+                    'is_formatted': True,
+                    'is_image': False,
+                    'is_image_list': False,
                     'original': value,
                     'processed': None
                 }
             else:
                 cleaned = clean_html_content(value) if isinstance(value, str) else str(value)
+                # Replace [dx-tab] with actual tab characters
+                cleaned = self.formatting_handler.replace_inline_tabs(cleaned)
                 processed[key] = {
                     'is_table': False,
                     'is_multi_table': False,
+                    'is_formatted': False,
+                    'is_image': False,
+                    'is_image_list': False,
                     'original': value,
                     'processed': cleaned
                 }
@@ -112,15 +177,28 @@ class DocxReplacer:
             if not text or '{{' not in text:
                 continue
 
-            # Check if we need to handle table placeholders
+            # Check if we need to handle special placeholders
             table_placeholder_found = False
             multi_table_placeholder_found = False
+            formatted_placeholder_found = False
+            image_placeholder_found = False
+            image_list_placeholder_found = False
 
             for key, (pattern, pattern_spaced) in patterns.items():
                 if pattern.search(text) or pattern_spaced.search(text):
                     value_data = processed_values[key]
 
-                    if value_data.get('is_multi_table'):
+                    if value_data.get('is_image_list'):
+                        # Store for image list insertion
+                        self.image_list_placeholders[paragraph] = (key, value_data['original'])
+                        image_list_placeholder_found = True
+                        break
+                    elif value_data.get('is_image'):
+                        # Store for single image insertion
+                        self.image_placeholders[paragraph] = (key, value_data['original'])
+                        image_placeholder_found = True
+                        break
+                    elif value_data.get('is_multi_table'):
                         # Store for multiple table insertion
                         self.multi_table_placeholders[paragraph] = (key, value_data['original'])
                         multi_table_placeholder_found = True
@@ -130,14 +208,52 @@ class DocxReplacer:
                         self.table_placeholders[paragraph] = (key, value_data['original'])
                         table_placeholder_found = True
                         break
+                    elif value_data.get('is_formatted'):
+                        # Capture formatting BEFORE clearing the paragraph
+                        formatting_info = self._capture_paragraph_formatting(paragraph)
+                        # Store for formatted content insertion (titles, headings, bullets)
+                        self.formatted_content_placeholders[paragraph] = (key, value_data['original'], formatting_info)
+                        formatted_placeholder_found = True
+                        break
 
-            # If it's a table placeholder, clear the paragraph
-            if table_placeholder_found or multi_table_placeholder_found:
+            # If it's a special placeholder, clear the paragraph
+            if (table_placeholder_found or multi_table_placeholder_found or
+                formatted_placeholder_found or image_placeholder_found or image_list_placeholder_found):
                 paragraph.text = ''
                 continue
 
             # Process runs to preserve formatting for non-table replacements
             self._process_paragraph_runs(paragraph, patterns, processed_values)
+
+    def _capture_paragraph_formatting(self, paragraph) -> Dict[str, Any]:
+        """Capture formatting info from a paragraph's runs and paragraph format"""
+        formatting = {
+            'font_size': None,
+            'font_name': None,
+            'bold': None,
+            'italic': None,
+            'underline': None,
+            'font_color': None,
+            'left_indent': None,
+            'first_line_indent': None
+        }
+
+        # Try to get formatting from runs in the paragraph
+        if paragraph.runs:
+            first_run = paragraph.runs[0]
+            formatting['font_size'] = first_run.font.size
+            formatting['font_name'] = first_run.font.name
+            formatting['bold'] = first_run.bold
+            formatting['italic'] = first_run.italic
+            formatting['underline'] = first_run.underline
+            if first_run.font.color.rgb:
+                formatting['font_color'] = first_run.font.color.rgb
+
+        # Capture paragraph indentation
+        formatting['left_indent'] = paragraph.paragraph_format.left_indent
+        formatting['first_line_indent'] = paragraph.paragraph_format.first_line_indent
+
+        return formatting
 
     def _process_paragraph_runs(self, paragraph, patterns: Dict, processed_values: Dict) -> None:
         """Process runs within a paragraph to preserve formatting"""
@@ -191,7 +307,8 @@ class DocxReplacer:
                     if key not in processed_values:
                         continue
                     value_data = processed_values[key]
-                    if not value_data.get('is_table') and not value_data.get('is_multi_table'):
+                    # Skip table, multi-table, and formatted content (they're handled separately)
+                    if not value_data.get('is_table') and not value_data.get('is_multi_table') and not value_data.get('is_formatted'):
                         # Regular text replacement
                         replacement = value_data['processed']
                         new_text = pattern.sub(replacement, new_text)
@@ -201,23 +318,25 @@ class DocxReplacer:
                 unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
                 new_text = unmatched_pattern.sub('', new_text)
 
-                # Clear existing runs and create a new one with the replaced text
+                # Clear existing runs and create content with possible inline images
                 paragraph.clear()
-                new_run = paragraph.add_run(new_text)
 
-                # Apply the preserved formatting
-                if original_bold is not None:
-                    new_run.bold = original_bold
-                if original_italic is not None:
-                    new_run.italic = original_italic
-                if original_underline is not None:
-                    new_run.underline = original_underline
-                if original_font_size is not None:
-                    new_run.font.size = original_font_size
-                if original_font_name is not None:
-                    new_run.font.name = original_font_name
-                if original_font_color is not None:
-                    new_run.font.color.rgb = original_font_color
+                # Build formatting dict for reuse
+                formatting = {
+                    'bold': original_bold,
+                    'italic': original_italic,
+                    'underline': original_underline,
+                    'font_size': original_font_size,
+                    'font_name': original_font_name,
+                    'font_color': original_font_color
+                }
+
+                # Check for inline images
+                if self.image_handler.has_inline_images(new_text):
+                    self._process_text_with_inline_images(paragraph, new_text, formatting)
+                else:
+                    new_run = paragraph.add_run(new_text)
+                    self._apply_run_formatting(new_run, formatting)
                 return
 
         # Process each run individually (for cases where placeholders are within single runs)
@@ -247,7 +366,8 @@ class DocxReplacer:
                 if pattern.search(new_text) or pattern_spaced.search(new_text):
                     value_data = processed_values[key]
 
-                    if not value_data.get('is_table') and not value_data.get('is_multi_table'):
+                    # Skip table, multi-table, and formatted content (they're handled separately)
+                    if not value_data.get('is_table') and not value_data.get('is_multi_table') and not value_data.get('is_formatted'):
                         # Regular text replacement
                         replacement = value_data['processed']
                         new_text = pattern.sub(replacement, new_text)
@@ -261,22 +381,165 @@ class DocxReplacer:
                 modified = True
 
             if modified:
-                # Update the run text while preserving formatting
-                run.text = new_text
+                # Build formatting dict
+                formatting = {
+                    'bold': original_bold,
+                    'italic': original_italic,
+                    'underline': original_underline,
+                    'font_size': original_font_size,
+                    'font_name': original_font_name,
+                    'font_color': original_font_color
+                }
 
-                # Restore the original formatting
-                if original_bold is not None:
-                    run.bold = original_bold
-                if original_italic is not None:
-                    run.italic = original_italic
-                if original_underline is not None:
-                    run.underline = original_underline
-                if original_font_size is not None:
-                    run.font.size = original_font_size
-                if original_font_name is not None:
-                    run.font.name = original_font_name
-                if original_font_color is not None:
-                    run.font.color.rgb = original_font_color
+                # Check for inline images in the modified text
+                if self.image_handler.has_inline_images(new_text):
+                    # Need to handle inline images - clear run and use paragraph-level insertion
+                    # Get the run's position in the paragraph
+                    run_element = run._element
+                    parent = run_element.getparent()
+
+                    # Create a temporary paragraph-like structure
+                    # Clear the run first
+                    run.text = ''
+
+                    # Insert text with images after this run
+                    # For simplicity, we'll just set run text if no images found after checking
+                    # Actually, we need to insert multiple runs - let's handle this differently
+
+                    # Get position of this run
+                    run_index = list(parent).index(run_element)
+
+                    # Process the text with inline images, inserting after current position
+                    self._insert_text_with_inline_images_at_run(paragraph, run, new_text, formatting)
+                else:
+                    # Update the run text while preserving formatting
+                    run.text = new_text
+                    self._apply_run_formatting(run, formatting)
+
+    def _insert_text_with_inline_images_at_run(self, paragraph, original_run, text: str, formatting: Dict[str, Any]) -> None:
+        """
+        Insert text with inline images, replacing the content of original_run.
+
+        Args:
+            paragraph: The paragraph containing the run
+            original_run: The run to replace
+            text: Text with inline image tags
+            formatting: Formatting to apply
+        """
+        pattern = self.image_handler.INLINE_IMAGE_PATTERN
+        last_end = 0
+        first_segment = True
+
+        for match in pattern.finditer(text):
+            # Add text before the image
+            before_text = text[last_end:match.start()]
+            if before_text:
+                if first_segment:
+                    # Use the original run for the first text segment
+                    original_run.text = before_text
+                    self._apply_run_formatting(original_run, formatting)
+                    first_segment = False
+                else:
+                    # Add new runs for subsequent text
+                    new_run = paragraph.add_run(before_text)
+                    self._apply_run_formatting(new_run, formatting)
+
+            # Add the image
+            image_key = match.group(1)
+            if hasattr(self, '_json_data') and image_key in self._json_data:
+                image_spec = self._json_data[image_key]
+                if self.image_handler.is_image_data(image_spec):
+                    try:
+                        image_info = self.image_handler.process_single_image(image_spec)
+                        if image_info.get('stream'):
+                            if first_segment:
+                                # Clear original run, add image
+                                original_run.text = ''
+                                first_segment = False
+                            img_run = paragraph.add_run()
+                            img_run.add_picture(
+                                image_info['stream'],
+                                width=image_info.get('width'),
+                                height=image_info.get('height')
+                            )
+                    except Exception as e:
+                        print(f"Error inserting inline image '{image_key}': {e}")
+
+            last_end = match.end()
+
+        # Add remaining text after last image
+        if last_end < len(text):
+            remaining_text = text[last_end:]
+            if remaining_text:
+                if first_segment:
+                    original_run.text = remaining_text
+                    self._apply_run_formatting(original_run, formatting)
+                else:
+                    new_run = paragraph.add_run(remaining_text)
+                    self._apply_run_formatting(new_run, formatting)
+        elif first_segment:
+            # No content was added, clear the original run
+            original_run.text = ''
+
+    def _process_text_with_inline_images(self, paragraph, text: str, formatting: Dict[str, Any]) -> None:
+        """
+        Process text containing inline image tags [dx-img:key].
+
+        Args:
+            paragraph: The paragraph to add content to
+            text: Text with inline image tags
+            formatting: Formatting to apply to text runs
+        """
+        pattern = self.image_handler.INLINE_IMAGE_PATTERN
+        last_end = 0
+
+        for match in pattern.finditer(text):
+            # Add text before the image
+            before_text = text[last_end:match.start()]
+            if before_text:
+                run = paragraph.add_run(before_text)
+                self._apply_run_formatting(run, formatting)
+
+            # Add the image
+            image_key = match.group(1)
+            if hasattr(self, '_json_data') and image_key in self._json_data:
+                image_spec = self._json_data[image_key]
+                if self.image_handler.is_image_data(image_spec):
+                    try:
+                        image_info = self.image_handler.process_single_image(image_spec)
+                        if image_info.get('stream'):
+                            run = paragraph.add_run()
+                            run.add_picture(
+                                image_info['stream'],
+                                width=image_info.get('width'),
+                                height=image_info.get('height')
+                            )
+                    except Exception as e:
+                        print(f"Error inserting inline image '{image_key}': {e}")
+
+            last_end = match.end()
+
+        # Add remaining text after last image
+        if last_end < len(text):
+            remaining_text = text[last_end:]
+            if remaining_text:
+                run = paragraph.add_run(remaining_text)
+                self._apply_run_formatting(run, formatting)
+
+    def _apply_run_formatting(self, run, formatting: Dict[str, Any]) -> None:
+        """Apply formatting to a run."""
+        if formatting.get('bold') is not None:
+            run.bold = formatting['bold']
+        if formatting.get('italic') is not None:
+            run.italic = formatting['italic']
+        if formatting.get('underline') is not None:
+            run.underline = formatting['underline']
+        if formatting.get('font_size') is not None:
+            run.font.size = formatting['font_size']
+        if formatting.get('font_name') is not None:
+            run.font.name = formatting['font_name']
+        if formatting.get('font_color') is not None:
+            run.font.color.rgb = formatting['font_color']
 
     def _process_tables(self, patterns: Dict, processed_values: Dict) -> None:
         """Process all table cells in the document while preserving formatting"""
@@ -507,6 +770,363 @@ class DocxReplacer:
                         # Insert the table
                         self._insert_table_at_index(parent, base_index + (i * 2) + 1, table_data)
 
+    def _batch_insert_formatted_content(self) -> None:
+        """Insert formatted paragraphs (titles, headings, bullets) in batch"""
+        if not self.formatted_content_placeholders:
+            return
+
+        for paragraph, placeholder_data in self.formatted_content_placeholders.items():
+            # Unpack the stored data (key, value, formatting_info)
+            if len(placeholder_data) == 3:
+                _, value, formatting_info = placeholder_data
+            else:
+                # Fallback for old format without formatting info
+                _, value = placeholder_data
+                formatting_info = {}
+
+            # Parse the formatted content
+            content_specs = self.formatting_handler.parse_formatted_content(value)
+
+            if not content_specs:
+                continue
+
+            parent = paragraph._element.getparent()
+            base_index = parent.index(paragraph._element)
+
+            # Get the captured formatting from the placeholder
+            original_font_size = formatting_info.get('font_size')
+            original_font_name = formatting_info.get('font_name')
+            original_bold = formatting_info.get('bold')
+            original_italic = formatting_info.get('italic')
+            original_underline = formatting_info.get('underline')
+            original_font_color = formatting_info.get('font_color')
+            original_left_indent = formatting_info.get('left_indent')
+            original_first_line_indent = formatting_info.get('first_line_indent')
+
+            # Track list numbering state for consecutive bullets of same type
+            current_list_type = None
+            list_num_id = None
+
+            # Insert each formatted paragraph
+            for i, spec in enumerate(content_specs):
+                style_name = spec['style']
+                text = spec['text']
+                is_bullet = spec.get('is_bullet', False)
+                bullet_type = spec.get('bullet_type')
+
+                # Create new paragraph
+                try:
+                    new_para = self.doc.add_paragraph(style=style_name)
+                except KeyError:
+                    # Style doesn't exist, fall back to Normal
+                    new_para = self.doc.add_paragraph(style='Normal')
+
+                # Add the text as a run and apply original formatting
+                run = new_para.add_run(text)
+
+                # Apply the original formatting from the placeholder
+                if original_font_size is not None:
+                    run.font.size = original_font_size
+                if original_font_name is not None:
+                    run.font.name = original_font_name
+                if original_bold is not None:
+                    run.bold = original_bold
+                if original_italic is not None:
+                    run.italic = original_italic
+                if original_underline is not None:
+                    run.underline = original_underline
+                if original_font_color is not None:
+                    run.font.color.rgb = original_font_color
+
+                # Handle custom numbering for alpha/roman bullets
+                if is_bullet and bullet_type:
+                    # Check if we need to start a new list or continue existing
+                    if bullet_type != current_list_type:
+                        current_list_type = bullet_type
+                        list_num_id = self._create_custom_numbering(
+                            bullet_type, original_font_size, original_left_indent
+                        )
+
+                    if list_num_id is not None:
+                        self._apply_numbering_to_paragraph(new_para, list_num_id)
+
+                # Insert at correct position
+                parent.insert(base_index + i, new_para._element)
+
+            # Remove the placeholder paragraph
+            parent.remove(paragraph._element)
+
+    def _batch_insert_images(self) -> None:
+        """Insert single images at placeholder locations"""
+        if not self.image_placeholders:
+            return
+
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        for paragraph, (key, image_spec) in self.image_placeholders.items():
+            try:
+                # Process the image specification
+                image_info = self.image_handler.process_single_image(image_spec)
+
+                if not image_info.get('stream'):
+                    continue
+
+                parent = paragraph._element.getparent()
+                index = parent.index(paragraph._element)
+
+                # Create a new paragraph for the image
+                new_para = self.doc.add_paragraph()
+
+                # Apply alignment
+                alignment = image_info.get('alignment', 'left')
+                if alignment == 'center':
+                    new_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                elif alignment == 'right':
+                    new_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                else:
+                    new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                # Add the image to the paragraph
+                run = new_para.add_run()
+                run.add_picture(
+                    image_info['stream'],
+                    width=image_info.get('width'),
+                    height=image_info.get('height')
+                )
+
+                # Insert at the placeholder location
+                parent.insert(index, new_para._element)
+
+                # Remove the placeholder paragraph
+                parent.remove(paragraph._element)
+
+            except Exception as e:
+                # Log error but continue processing other images
+                print(f"Error inserting image for '{key}': {e}")
+
+    def _batch_insert_image_lists(self) -> None:
+        """Insert lists of images at placeholder locations"""
+        if not self.image_list_placeholders:
+            return
+
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+        for paragraph, (key, image_list_spec) in self.image_list_placeholders.items():
+            try:
+                # Process the image list specification
+                images, layout, _spacing = self.image_handler.process_image_list(image_list_spec)
+
+                if not images:
+                    continue
+
+                parent = paragraph._element.getparent()
+                base_index = parent.index(paragraph._element)
+
+                if layout == 'horizontal':
+                    # All images in one paragraph (side by side)
+                    new_para = self.doc.add_paragraph()
+
+                    # Get default alignment from first image or center for horizontal
+                    alignment = images[0].get('alignment', 'center')
+                    if alignment == 'center':
+                        new_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                    elif alignment == 'right':
+                        new_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                    else:
+                        new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                    for i, image_info in enumerate(images):
+                        run = new_para.add_run()
+                        run.add_picture(
+                            image_info['stream'],
+                            width=image_info.get('width'),
+                            height=image_info.get('height')
+                        )
+                        # Add space between images (except after last)
+                        if i < len(images) - 1:
+                            new_para.add_run('  ')  # Two spaces as separator
+
+                    parent.insert(base_index, new_para._element)
+
+                else:
+                    # Vertical layout (default): each image in its own paragraph
+                    for i, image_info in enumerate(images):
+                        new_para = self.doc.add_paragraph()
+
+                        # Apply alignment
+                        alignment = image_info.get('alignment', 'left')
+                        if alignment == 'center':
+                            new_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        elif alignment == 'right':
+                            new_para.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                        else:
+                            new_para.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
+                        run = new_para.add_run()
+                        run.add_picture(
+                            image_info['stream'],
+                            width=image_info.get('width'),
+                            height=image_info.get('height')
+                        )
+
+                        parent.insert(base_index + i, new_para._element)
+
+                # Remove the placeholder paragraph
+                parent.remove(paragraph._element)
+
+            except Exception as e:
+                # Log error but continue processing other image lists
+                print(f"Error inserting image list for '{key}': {e}")
+
+    def _create_custom_numbering(self, bullet_type: str, font_size=None, left_indent=None) -> int:
+        """Create custom numbering definition for alpha/roman lists"""
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        # Get the numbering format
+        num_fmt = self.formatting_handler.get_numbering_format(bullet_type)
+
+        if num_fmt is None:
+            return None  # Standard bullet, no custom numbering needed
+
+        # Access the numbering part of the document
+        numbering_part = self.doc.part.numbering_part
+        if numbering_part is None:
+            # Create numbering part if it doesn't exist
+            from docx.parts.numbering import NumberingPart
+            numbering_part = NumberingPart.new()
+            self.doc.part.relate_to(numbering_part, 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering')
+
+        numbering = numbering_part.numbering_definitions._numbering
+
+        # Find max abstractNumId and numId
+        abstract_nums = numbering.findall(qn('w:abstractNum'))
+        max_abstract_id = max([int(a.get(qn('w:abstractNumId'))) for a in abstract_nums], default=-1)
+
+        nums = numbering.findall(qn('w:num'))
+        max_num_id = max([int(n.get(qn('w:numId'))) for n in nums], default=0)
+
+        new_abstract_id = max_abstract_id + 1
+        new_num_id = max_num_id + 1
+
+        # Create abstractNum element
+        abstract_num = OxmlElement('w:abstractNum')
+        abstract_num.set(qn('w:abstractNumId'), str(new_abstract_id))
+
+        # Create level 0 (single level list)
+        lvl = OxmlElement('w:lvl')
+        lvl.set(qn('w:ilvl'), '0')
+
+        # Start value
+        start = OxmlElement('w:start')
+        start.set(qn('w:val'), '1')
+        lvl.append(start)
+
+        # Number format
+        numFmt = OxmlElement('w:numFmt')
+        numFmt.set(qn('w:val'), num_fmt)
+        lvl.append(numFmt)
+
+        # Level text (e.g., "a)" or "1.")
+        lvlText = OxmlElement('w:lvlText')
+        if num_fmt in ['lowerLetter', 'upperLetter']:
+            lvlText.set(qn('w:val'), '%1)')
+        elif num_fmt in ['lowerRoman', 'upperRoman']:
+            lvlText.set(qn('w:val'), '%1)')
+        else:
+            lvlText.set(qn('w:val'), '%1.')
+        lvl.append(lvlText)
+
+        # Level justification
+        lvlJc = OxmlElement('w:lvlJc')
+        lvlJc.set(qn('w:val'), 'left')
+        lvl.append(lvlJc)
+
+        # Paragraph properties (indentation)
+        # Use original paragraph indent or default to document standard
+        pPr = OxmlElement('w:pPr')
+        ind = OxmlElement('w:ind')
+
+        # Calculate left indent in twips (1/20 of a point)
+        # left_indent from python-docx is in EMUs (914400 per inch, or 635 per twip)
+        if left_indent is not None:
+            # Convert EMUs to twips: EMUs / 635 = twips
+            left_twips = int(left_indent / 635) + 360  # Add hanging space for bullet
+        else:
+            # Default: match document's standard lowerLetter indent (981 twips left, 360 hanging)
+            left_twips = 981
+
+        hanging_twips = 360  # Space for bullet marker (about 0.25 inch)
+
+        ind.set(qn('w:left'), str(left_twips))
+        ind.set(qn('w:hanging'), str(hanging_twips))
+        pPr.append(ind)
+        lvl.append(pPr)
+
+        # Run properties for the bullet/number marker (font size)
+        if font_size is not None:
+            rPr = OxmlElement('w:rPr')
+            sz = OxmlElement('w:sz')
+            # font_size is in EMUs (12700 per point), convert to half-points
+            # 1 point = 12700 EMU, w:sz uses half-points (1pt = 2 half-points)
+            size_in_half_points = int((font_size / 12700) * 2)
+            sz.set(qn('w:val'), str(size_in_half_points))
+            rPr.append(sz)
+            szCs = OxmlElement('w:szCs')
+            szCs.set(qn('w:val'), str(size_in_half_points))
+            rPr.append(szCs)
+            lvl.append(rPr)
+
+        abstract_num.append(lvl)
+
+        # Insert abstractNum before num elements
+        first_num = numbering.find(qn('w:num'))
+        if first_num is not None:
+            first_num.addprevious(abstract_num)
+        else:
+            numbering.append(abstract_num)
+
+        # Create num element that references the abstractNum
+        num = OxmlElement('w:num')
+        num.set(qn('w:numId'), str(new_num_id))
+        abstractNumId = OxmlElement('w:abstractNumId')
+        abstractNumId.set(qn('w:val'), str(new_abstract_id))
+        num.append(abstractNumId)
+        numbering.append(num)
+
+        return new_num_id
+
+    def _apply_numbering_to_paragraph(self, paragraph, num_id: int) -> None:
+        """Apply numbering to a paragraph"""
+        from docx.oxml import OxmlElement
+        from docx.oxml.ns import qn
+
+        p = paragraph._element
+        pPr = p.find(qn('w:pPr'))
+        if pPr is None:
+            pPr = OxmlElement('w:pPr')
+            p.insert(0, pPr)
+
+        # Remove existing numPr if any
+        existing_numPr = pPr.find(qn('w:numPr'))
+        if existing_numPr is not None:
+            pPr.remove(existing_numPr)
+
+        # Create numPr element
+        numPr = OxmlElement('w:numPr')
+
+        # Add ilvl (indent level)
+        ilvl = OxmlElement('w:ilvl')
+        ilvl.set(qn('w:val'), '0')
+        numPr.append(ilvl)
+
+        # Add numId
+        numId_elem = OxmlElement('w:numId')
+        numId_elem.set(qn('w:val'), str(num_id))
+        numPr.append(numId_elem)
+
+        pPr.append(numPr)
+
     def _insert_table_at_index(self, parent, index: int, table_data: Dict[str, Any]) -> None:
         """Insert a table at a specific index in the parent element"""
         rows = table_data['rows']
@@ -615,12 +1235,18 @@ class DocxReplacer:
         parent.insert(index, table._element)
 
     def _set_cell_content_with_formatting(self, cell, content: str) -> None:
-        """Set cell content with HTML formatting support"""
+        """Set cell content with HTML formatting and inline image support"""
         import re
 
         # Clear existing content
         cell.text = ""
         paragraph = cell.paragraphs[0] if cell.paragraphs else cell.add_paragraph()
+
+        # Check for inline images first
+        if self.image_handler.has_inline_images(content):
+            # Process content with inline images
+            self._process_cell_content_with_inline_images(paragraph, content)
+            return
 
         # Process the content to handle HTML tags
         parts = self._parse_html_for_cell(content)
@@ -633,6 +1259,64 @@ class DocxReplacer:
                 run.italic = True
             if part.get('underline'):
                 run.underline = True
+
+    def _process_cell_content_with_inline_images(self, paragraph, content: str) -> None:
+        """
+        Process cell content containing inline image tags.
+
+        Args:
+            paragraph: The cell paragraph to add content to
+            content: Content with possible inline image tags
+        """
+        pattern = self.image_handler.INLINE_IMAGE_PATTERN
+        last_end = 0
+
+        for match in pattern.finditer(content):
+            # Add text before the image (with HTML formatting)
+            before_text = content[last_end:match.start()]
+            if before_text:
+                parts = self._parse_html_for_cell(before_text)
+                for part in parts:
+                    run = paragraph.add_run(part['text'])
+                    if part.get('bold'):
+                        run.bold = True
+                    if part.get('italic'):
+                        run.italic = True
+                    if part.get('underline'):
+                        run.underline = True
+
+            # Add the image
+            image_key = match.group(1)
+            if hasattr(self, '_json_data') and image_key in self._json_data:
+                image_spec = self._json_data[image_key]
+                if self.image_handler.is_image_data(image_spec):
+                    try:
+                        image_info = self.image_handler.process_single_image(image_spec)
+                        if image_info.get('stream'):
+                            run = paragraph.add_run()
+                            run.add_picture(
+                                image_info['stream'],
+                                width=image_info.get('width'),
+                                height=image_info.get('height')
+                            )
+                    except Exception as e:
+                        print(f"Error inserting inline image '{image_key}' in cell: {e}")
+
+            last_end = match.end()
+
+        # Add remaining text after last image
+        if last_end < len(content):
+            remaining_text = content[last_end:]
+            if remaining_text:
+                parts = self._parse_html_for_cell(remaining_text)
+                for part in parts:
+                    run = paragraph.add_run(part['text'])
+                    if part.get('bold'):
+                        run.bold = True
+                    if part.get('italic'):
+                        run.italic = True
+                    if part.get('underline'):
+                        run.underline = True
 
     def _parse_html_for_cell(self, html_text: str) -> list:
         """Parse HTML text and return list of formatted text parts"""
@@ -1138,7 +1822,7 @@ class DocxReplacer:
         if len(tcMar):
             tcPr.append(tcMar)
 
-    def _set_cell_borders(self, cell, border_config: Dict[str, Any]) -> None:
+    def _set_cell_borders(self, cell, border_config) -> None:
         """Set cell borders with configuration"""
         from docx.oxml import OxmlElement
         from docx.oxml.ns import qn
@@ -1154,6 +1838,16 @@ class DocxReplacer:
         # Create new borders element
         tcBorders = OxmlElement('w:tcBorders')
 
+        # Handle "borders": "none" - remove all borders
+        if isinstance(border_config, str) and border_config.lower() == 'none':
+            # Set all sides to nil
+            for side in ['top', 'bottom', 'left', 'right']:
+                border = OxmlElement(f'w:{side}')
+                border.set(qn('w:val'), 'nil')
+                tcBorders.append(border)
+            tcPr.append(tcBorders)
+            return
+
         # Check if we have individual border specifications
         has_individual_borders = any(key in border_config for key in ['top', 'bottom', 'left', 'right'])
 
@@ -1165,21 +1859,30 @@ class DocxReplacer:
                     # Handle both dict and direct value formats
                     if isinstance(side_config, dict):
                         color = side_config.get('color', '000000').replace('#', '')
-                        size = str(int(side_config.get('size', 0.5) * 8))
+                        size_raw = side_config.get('size', 0.5)
+                        size = str(int(size_raw * 8))
                         style = side_config.get('style', 'single')
                     else:
                         # If it's just a number, use it as size
                         color = '000000'
-                        size = str(int(side_config * 8)) if isinstance(side_config, (int, float)) else '4'
+                        size_raw = side_config if isinstance(side_config, (int, float)) else 0.5
+                        size = str(int(size_raw * 8))
                         style = 'single'
 
-                    if size != '0':  # Only add border if size is not 0
-                        border = OxmlElement(f'w:{side}')
+                    # Create border element
+                    border = OxmlElement(f'w:{side}')
+
+                    if size == '0':
+                        # Explicitly remove border by setting style to nil
+                        border.set(qn('w:val'), 'nil')
+                    else:
+                        # Add border with specified style, size, and color
                         border.set(qn('w:val'), style)
                         border.set(qn('w:sz'), size)
                         border.set(qn('w:color'), color)
                         border.set(qn('w:space'), '0')
-                        tcBorders.append(border)
+
+                    tcBorders.append(border)
         else:
             # Use the old format (uniform borders)
             border_color = border_config.get('color', '000000').replace('#', '')
@@ -1199,7 +1902,9 @@ class DocxReplacer:
                     border.set(qn('w:space'), '0')
                     tcBorders.append(border)
 
-        tcPr.append(tcBorders)
+        # Only append tcBorders if it has child elements
+        if len(tcBorders) > 0:
+            tcPr.append(tcBorders)
 
     def _set_cell_bg_fast(self, cell, color: str) -> None:
         """Fast background setting"""
