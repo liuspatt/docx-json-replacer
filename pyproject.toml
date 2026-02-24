@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docx-json-replacer"
-version = "0.9.0"
+version = "0.9.1"
 description = "Replace template placeholders in DOCX files with JSON data, supports tables with HTML formatting and cell-level styling"
 readme = "README.md"
 authors = [{name = "liuspatt", email = "liuspatt@example.com"}]
