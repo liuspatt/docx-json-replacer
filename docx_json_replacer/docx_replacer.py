@@ -307,27 +307,8 @@ class DocxReplacer:
                     has_complete_placeholders = True
                     break
 
-            # If we have complete placeholders and multiple runs, merge and re-split
+            # If we have complete placeholders and multiple runs, handle split placeholders
             if has_complete_placeholders and len(runs) > 1:
-                # Save the formatting from the first run that has a placeholder start
-                formatting_run = None
-                for run in runs:
-                    if '{{' in run.text:
-                        formatting_run = run
-                        break
-                if not formatting_run:
-                    formatting_run = runs[0]
-
-                # Store the original formatting
-                original_bold = formatting_run.bold
-                original_italic = formatting_run.italic
-                original_underline = formatting_run.underline
-                original_font_size = formatting_run.font.size
-                original_font_name = formatting_run.font.name
-                original_font_color = None
-                if formatting_run.font.color.rgb:
-                    original_font_color = formatting_run.font.color.rgb
-
                 # Check if any placeholder has HTML formatting
                 html_formatted_keys = []
                 for key, (pattern, pattern_spaced) in patterns.items():
@@ -338,50 +319,35 @@ class DocxReplacer:
                         if value_data.get('is_html_formatted'):
                             html_formatted_keys.append((key, pattern, pattern_spaced, value_data))
 
-                # Build formatting dict for reuse
-                formatting = {
-                    'bold': original_bold,
-                    'italic': original_italic,
-                    'underline': original_underline,
-                    'font_size': original_font_size,
-                    'font_name': original_font_name,
-                    'font_color': original_font_color
-                }
-
-                # If we have HTML formatted content, handle it specially
+                # If we have HTML formatted content, handle it specially (needs paragraph.clear())
                 if html_formatted_keys:
+                    # Save the formatting from the first run that has a placeholder start
+                    formatting_run = None
+                    for run in runs:
+                        if '{{' in run.text:
+                            formatting_run = run
+                            break
+                    if not formatting_run:
+                        formatting_run = runs[0]
+
+                    formatting = {
+                        'bold': formatting_run.bold,
+                        'italic': formatting_run.italic,
+                        'underline': formatting_run.underline,
+                        'font_size': formatting_run.font.size,
+                        'font_name': formatting_run.font.name,
+                        'font_color': formatting_run.font.color.rgb if formatting_run.font.color.rgb else None
+                    }
+
                     paragraph.clear()
                     self._process_paragraph_with_html_formatting(
                         paragraph, full_text, patterns, processed_values, formatting
                     )
                     return
 
-                # Process the full text (no HTML formatting)
-                new_text = full_text
-                for key, (pattern, pattern_spaced) in patterns.items():
-                    if key not in processed_values:
-                        continue
-                    value_data = processed_values[key]
-                    # Skip table, multi-table, and formatted content (they're handled separately)
-                    if not value_data.get('is_table') and not value_data.get('is_multi_table') and not value_data.get('is_formatted'):
-                        # Regular text replacement
-                        replacement = value_data['processed']
-                        new_text = pattern.sub(replacement, new_text)
-                        new_text = pattern_spaced.sub(replacement, new_text)
-
-                # Remove any remaining unmatched placeholders
-                unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
-                new_text = unmatched_pattern.sub('', new_text)
-
-                # Clear existing runs and create content with possible inline images
-                paragraph.clear()
-
-                # Check for inline images
-                if self.image_handler.has_inline_images(new_text):
-                    self._process_text_with_inline_images(paragraph, new_text, formatting)
-                else:
-                    new_run = paragraph.add_run(new_text)
-                    self._apply_run_formatting(new_run, formatting)
+                # Handle split placeholders while preserving formatting
+                # Replace placeholders that span multiple runs
+                self._replace_split_placeholders(paragraph, runs, patterns, processed_values)
                 return
 
         # Process each run individually (for cases where placeholders are within single runs)
@@ -670,6 +636,115 @@ class DocxReplacer:
             if remaining_text:
                 run = paragraph.add_run(remaining_text)
                 self._apply_run_formatting(run, formatting)
+
+    def _replace_split_placeholders(self, paragraph, runs: List, patterns: Dict, processed_values: Dict) -> None:
+        """
+        Handle placeholders that are split across multiple runs while preserving formatting.
+
+        This method replaces placeholders without using paragraph.clear(), which would lose
+        all formatting. Instead, it modifies runs in-place and handles the case where
+        a placeholder like {{name}} is split across runs (e.g., "{{na" in one run, "me}}" in another).
+        """
+        # Keep iterating until no more replacements are made
+        max_iterations = 100  # Safety limit
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
+            made_replacement = False
+
+            # Rebuild full_text from current runs
+            full_text = ''.join(run.text for run in runs)
+
+            for key, (pattern, pattern_spaced) in patterns.items():
+                if key not in processed_values:
+                    continue
+
+                value_data = processed_values[key]
+                # Skip special types handled elsewhere
+                if (value_data.get('is_table') or value_data.get('is_multi_table') or
+                    value_data.get('is_formatted') or value_data.get('is_html_formatted')):
+                    continue
+
+                placeholder = f"{{{{{key}}}}}"
+                placeholder_spaced = f"{{{{ {key} }}}}"
+
+                # Check both placeholder formats
+                for ph in [placeholder, placeholder_spaced]:
+                    if ph not in full_text:
+                        continue
+
+                    # Find the position of the placeholder
+                    pos = full_text.find(ph)
+                    if pos == -1:
+                        continue
+
+                    # Find which runs contain this placeholder
+                    char_count = 0
+                    start_run_idx = None
+                    start_char_in_run = None
+                    end_run_idx = None
+                    end_char_in_run = None
+
+                    for idx, run in enumerate(runs):
+                        run_start = char_count
+                        run_end = char_count + len(run.text)
+
+                        # Check if placeholder starts in this run
+                        if start_run_idx is None and run_start <= pos < run_end:
+                            start_run_idx = idx
+                            start_char_in_run = pos - run_start
+
+                        # Check if placeholder ends in this run
+                        placeholder_end = pos + len(ph)
+                        if end_run_idx is None and run_start < placeholder_end <= run_end:
+                            end_run_idx = idx
+                            end_char_in_run = placeholder_end - run_start
+                            break
+
+                        char_count = run_end
+
+                    if start_run_idx is None or end_run_idx is None:
+                        continue
+
+                    # Get the replacement value
+                    replacement = value_data['processed'] if value_data.get('processed') is not None else str(value_data.get('original', ''))
+
+                    # Perform the replacement
+                    if start_run_idx == end_run_idx:
+                        # Placeholder is within a single run - simple replacement
+                        run = runs[start_run_idx]
+                        run.text = run.text[:start_char_in_run] + replacement + run.text[end_char_in_run:]
+                    else:
+                        # Placeholder spans multiple runs
+                        # Put the replacement in the first run (preserving its formatting), clear the rest
+                        start_run = runs[start_run_idx]
+                        end_run = runs[end_run_idx]
+
+                        # Keep text before placeholder in start run, add replacement
+                        start_run.text = start_run.text[:start_char_in_run] + replacement
+
+                        # Keep text after placeholder in end run
+                        end_run.text = end_run.text[end_char_in_run:]
+
+                        # Clear all runs in between
+                        for idx in range(start_run_idx + 1, end_run_idx):
+                            runs[idx].text = ""
+
+                    made_replacement = True
+                    break  # Restart the outer loop after each replacement
+
+                if made_replacement:
+                    break
+
+            if not made_replacement:
+                break
+
+        # Clean up any remaining unmatched placeholders
+        unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
+        for run in runs:
+            if run.text and unmatched_pattern.search(run.text):
+                run.text = unmatched_pattern.sub('', run.text)
 
     def _apply_run_formatting(self, run, formatting: Dict[str, Any]) -> None:
         """Apply formatting to a run."""
