@@ -1,5 +1,5 @@
 import re
-from typing import Union, List, Any
+from typing import Union, List, Any, Dict
 
 
 def clean_html_content(value: str) -> str:
@@ -9,6 +9,115 @@ def clean_html_content(value: str) -> str:
 
     # Return plain text with formatting markers
     return _clean_plain_text_with_formatting_markers(value)
+
+
+def has_html_formatting(value: str) -> bool:
+    """Check if value contains HTML formatting tags that need special handling."""
+    if not isinstance(value, str):
+        return False
+    # Check for bold, italic, underline tags
+    return bool(re.search(r'<(b|strong|i|em|u)(\s[^>]*)?>.*?</\1>', value, re.IGNORECASE | re.DOTALL))
+
+
+def parse_html_to_runs(html_text: str) -> List[Dict[str, Any]]:
+    """
+    Parse HTML text and return list of formatted text parts for Word runs.
+
+    Each part is a dict with:
+    - 'text': The text content
+    - 'bold': True if text should be bold
+    - 'italic': True if text should be italic
+    - 'underline': True if text should be underlined
+
+    Args:
+        html_text: HTML string to parse
+
+    Returns:
+        List of dicts representing formatted text runs
+    """
+    if not isinstance(html_text, str):
+        return [{'text': str(html_text)}]
+
+    # Handle line breaks first
+    html_text = html_text.replace('<br>', '\n').replace('<br/>', '\n').replace('<br />', '\n')
+
+    # Handle paragraphs
+    html_text = re.sub(r'<p[^>]*>', '', html_text)
+    html_text = html_text.replace('</p>', '\n')
+
+    # Convert HTML entities
+    html_text = _convert_html_entities(html_text)
+
+    parts = []
+    current_text = []
+    format_stack = {'bold': 0, 'italic': 0, 'underline': 0}
+    i = 0
+
+    while i < len(html_text):
+        if html_text[i] == '<':
+            # Find the end of the tag
+            tag_end = html_text.find('>', i)
+            if tag_end == -1:
+                # Malformed tag, treat as text
+                current_text.append(html_text[i])
+                i += 1
+                continue
+
+            tag = html_text[i:tag_end+1]
+            tag_lower = tag.lower()
+
+            # Check if we have accumulated text to save
+            if current_text:
+                text = ''.join(current_text)
+                if text:  # Include whitespace-only text too
+                    part = {'text': text}
+                    if format_stack['bold'] > 0:
+                        part['bold'] = True
+                    if format_stack['italic'] > 0:
+                        part['italic'] = True
+                    if format_stack['underline'] > 0:
+                        part['underline'] = True
+                    parts.append(part)
+                current_text = []
+
+            # Handle opening/closing tags
+            if re.match(r'<(b|strong)(\s[^>]*)?>$', tag_lower):
+                format_stack['bold'] += 1
+            elif re.match(r'</(b|strong)>$', tag_lower):
+                format_stack['bold'] = max(0, format_stack['bold'] - 1)
+            elif re.match(r'<(i|em)(\s[^>]*)?>$', tag_lower):
+                format_stack['italic'] += 1
+            elif re.match(r'</(i|em)>$', tag_lower):
+                format_stack['italic'] = max(0, format_stack['italic'] - 1)
+            elif re.match(r'<u(\s[^>]*)?>$', tag_lower):
+                format_stack['underline'] += 1
+            elif re.match(r'</u>$', tag_lower):
+                format_stack['underline'] = max(0, format_stack['underline'] - 1)
+            # Skip other tags (remove them)
+
+            i = tag_end + 1
+        else:
+            current_text.append(html_text[i])
+            i += 1
+
+    # Don't forget any remaining text
+    if current_text:
+        text = ''.join(current_text)
+        if text:
+            part = {'text': text}
+            if format_stack['bold'] > 0:
+                part['bold'] = True
+            if format_stack['italic'] > 0:
+                part['italic'] = True
+            if format_stack['underline'] > 0:
+                part['underline'] = True
+            parts.append(part)
+
+    # If no parts were created, return empty text
+    if not parts:
+        return [{'text': ''}]
+
+    return parts
 
 
 def _clean_plain_text(value: str) -> str:

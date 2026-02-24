@@ -10,12 +10,12 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 try:
-    from .utility.html_parse import clean_html_content
+    from .utility.html_parse import clean_html_content, has_html_formatting, parse_html_to_runs
     from .table_handler import TableHandler
     from .formatting_handler import FormattingHandler
     from .image_handler import ImageHandler
 except ImportError:
-    from utility.html_parse import clean_html_content
+    from utility.html_parse import clean_html_content, has_html_formatting, parse_html_to_runs
     from table_handler import TableHandler
     from formatting_handler import FormattingHandler
     from image_handler import ImageHandler
@@ -91,56 +91,81 @@ class DocxReplacer:
             is_formatted = self.formatting_handler.has_formatting_tags(value)
             is_image = self.image_handler.is_image_data(value)
             is_image_list = self.image_handler.is_image_list_data(value)
+            is_html_formatted = has_html_formatting(value) if isinstance(value, str) else False
 
             if is_image_list:
                 processed[key] = {
                     'is_table': False,
                     'is_multi_table': False,
                     'is_formatted': False,
+                    'is_html_formatted': False,
                     'is_image': False,
                     'is_image_list': True,
                     'original': value,
-                    'processed': None
+                    'processed': None,
+                    'runs': None
                 }
             elif is_image:
                 processed[key] = {
                     'is_table': False,
                     'is_multi_table': False,
                     'is_formatted': False,
+                    'is_html_formatted': False,
                     'is_image': True,
                     'is_image_list': False,
                     'original': value,
-                    'processed': None
+                    'processed': None,
+                    'runs': None
                 }
             elif is_multi_table:
                 processed[key] = {
                     'is_table': False,  # Don't treat as single table
                     'is_multi_table': True,
                     'is_formatted': False,
+                    'is_html_formatted': False,
                     'is_image': False,
                     'is_image_list': False,
                     'original': value,
-                    'processed': None
+                    'processed': None,
+                    'runs': None
                 }
             elif is_table:
                 processed[key] = {
                     'is_table': True,
                     'is_multi_table': False,
                     'is_formatted': False,
+                    'is_html_formatted': False,
                     'is_image': False,
                     'is_image_list': False,
                     'original': value,
-                    'processed': None
+                    'processed': None,
+                    'runs': None
                 }
             elif is_formatted:
                 processed[key] = {
                     'is_table': False,
                     'is_multi_table': False,
                     'is_formatted': True,
+                    'is_html_formatted': False,
                     'is_image': False,
                     'is_image_list': False,
                     'original': value,
-                    'processed': None
+                    'processed': None,
+                    'runs': None
+                }
+            elif is_html_formatted:
+                # Parse HTML into runs with formatting info
+                runs = parse_html_to_runs(value)
+                processed[key] = {
+                    'is_table': False,
+                    'is_multi_table': False,
+                    'is_formatted': False,
+                    'is_html_formatted': True,
+                    'is_image': False,
+                    'is_image_list': False,
+                    'original': value,
+                    'processed': None,
+                    'runs': runs
                 }
             else:
                 cleaned = clean_html_content(value) if isinstance(value, str) else str(value)
@@ -150,10 +175,12 @@ class DocxReplacer:
                     'is_table': False,
                     'is_multi_table': False,
                     'is_formatted': False,
+                    'is_html_formatted': False,
                     'is_image': False,
                     'is_image_list': False,
                     'original': value,
-                    'processed': cleaned
+                    'processed': cleaned,
+                    'runs': None
                 }
 
         return processed
@@ -301,7 +328,35 @@ class DocxReplacer:
                 if formatting_run.font.color.rgb:
                     original_font_color = formatting_run.font.color.rgb
 
-                # Process the full text
+                # Check if any placeholder has HTML formatting
+                html_formatted_keys = []
+                for key, (pattern, pattern_spaced) in patterns.items():
+                    if key not in processed_values:
+                        continue
+                    if pattern.search(full_text) or pattern_spaced.search(full_text):
+                        value_data = processed_values[key]
+                        if value_data.get('is_html_formatted'):
+                            html_formatted_keys.append((key, pattern, pattern_spaced, value_data))
+
+                # Build formatting dict for reuse
+                formatting = {
+                    'bold': original_bold,
+                    'italic': original_italic,
+                    'underline': original_underline,
+                    'font_size': original_font_size,
+                    'font_name': original_font_name,
+                    'font_color': original_font_color
+                }
+
+                # If we have HTML formatted content, handle it specially
+                if html_formatted_keys:
+                    paragraph.clear()
+                    self._process_paragraph_with_html_formatting(
+                        paragraph, full_text, patterns, processed_values, formatting
+                    )
+                    return
+
+                # Process the full text (no HTML formatting)
                 new_text = full_text
                 for key, (pattern, pattern_spaced) in patterns.items():
                     if key not in processed_values:
@@ -320,16 +375,6 @@ class DocxReplacer:
 
                 # Clear existing runs and create content with possible inline images
                 paragraph.clear()
-
-                # Build formatting dict for reuse
-                formatting = {
-                    'bold': original_bold,
-                    'italic': original_italic,
-                    'underline': original_underline,
-                    'font_size': original_font_size,
-                    'font_name': original_font_name,
-                    'font_color': original_font_color
-                }
 
                 # Check for inline images
                 if self.image_handler.has_inline_images(new_text):
@@ -358,7 +403,40 @@ class DocxReplacer:
             if run.font.color.rgb:
                 original_font_color = run.font.color.rgb
 
-            # Replace placeholders in this run
+            # Check for HTML formatted content first
+            html_formatted_match = None
+            for key, (pattern, pattern_spaced) in patterns.items():
+                if key not in processed_values:
+                    continue
+                if pattern.search(new_text) or pattern_spaced.search(new_text):
+                    value_data = processed_values[key]
+                    if value_data.get('is_html_formatted'):
+                        html_formatted_match = (key, pattern, pattern_spaced, value_data)
+                        break
+
+            # Build formatting dict
+            formatting = {
+                'bold': original_bold,
+                'italic': original_italic,
+                'underline': original_underline,
+                'font_size': original_font_size,
+                'font_name': original_font_name,
+                'font_color': original_font_color
+            }
+
+            # If we have HTML formatted content, handle the whole run specially
+            if html_formatted_match:
+                key, pattern, pattern_spaced, value_data = html_formatted_match
+                # Clear the run and process with HTML formatting
+                run.text = ''
+                # Insert formatted runs after this one
+                self._insert_html_formatted_content_at_run(
+                    paragraph, run, original_text, patterns, processed_values, formatting
+                )
+                modified = True
+                continue
+
+            # Replace placeholders in this run (non-HTML formatted)
             for key, (pattern, pattern_spaced) in patterns.items():
                 if key not in processed_values:
                     continue
@@ -366,8 +444,9 @@ class DocxReplacer:
                 if pattern.search(new_text) or pattern_spaced.search(new_text):
                     value_data = processed_values[key]
 
-                    # Skip table, multi-table, and formatted content (they're handled separately)
-                    if not value_data.get('is_table') and not value_data.get('is_multi_table') and not value_data.get('is_formatted'):
+                    # Skip table, multi-table, formatted content, and HTML formatted (handled separately)
+                    if (not value_data.get('is_table') and not value_data.get('is_multi_table')
+                        and not value_data.get('is_formatted') and not value_data.get('is_html_formatted')):
                         # Regular text replacement
                         replacement = value_data['processed']
                         new_text = pattern.sub(replacement, new_text)
@@ -381,16 +460,6 @@ class DocxReplacer:
                 modified = True
 
             if modified:
-                # Build formatting dict
-                formatting = {
-                    'bold': original_bold,
-                    'italic': original_italic,
-                    'underline': original_underline,
-                    'font_size': original_font_size,
-                    'font_name': original_font_name,
-                    'font_color': original_font_color
-                }
-
                 # Check for inline images in the modified text
                 if self.image_handler.has_inline_images(new_text):
                     # Need to handle inline images - clear run and use paragraph-level insertion
@@ -415,6 +484,82 @@ class DocxReplacer:
                     # Update the run text while preserving formatting
                     run.text = new_text
                     self._apply_run_formatting(run, formatting)
+
+    def _insert_html_formatted_content_at_run(
+        self, paragraph, original_run, text: str, patterns: Dict,
+        processed_values: Dict, base_formatting: Dict[str, Any]
+    ) -> None:
+        """
+        Insert HTML formatted content at a run position.
+
+        Args:
+            paragraph: The paragraph containing the run
+            original_run: The run to replace (already cleared)
+            text: The original text with placeholders
+            patterns: Compiled regex patterns for placeholders
+            processed_values: Pre-processed values dict
+            base_formatting: Base formatting to apply
+        """
+        # Find placeholder position in text
+        first_segment = True
+        for key, (pattern, pattern_spaced) in patterns.items():
+            if key not in processed_values:
+                continue
+            value_data = processed_values[key]
+            if not value_data.get('is_html_formatted'):
+                continue
+
+            # Find match
+            match = pattern.search(text) or pattern_spaced.search(text)
+            if not match:
+                continue
+
+            # Add text before placeholder
+            before_text = text[:match.start()]
+            if before_text:
+                if first_segment:
+                    original_run.text = before_text
+                    self._apply_run_formatting(original_run, base_formatting)
+                    first_segment = False
+                else:
+                    run = paragraph.add_run(before_text)
+                    self._apply_run_formatting(run, base_formatting)
+
+            # Add HTML formatted runs
+            if value_data.get('runs'):
+                for run_spec in value_data['runs']:
+                    if first_segment:
+                        original_run.text = run_spec.get('text', '')
+                        run = original_run
+                        first_segment = False
+                    else:
+                        run = paragraph.add_run(run_spec.get('text', ''))
+
+                    # Apply base formatting first
+                    if base_formatting.get('font_size') is not None:
+                        run.font.size = base_formatting['font_size']
+                    if base_formatting.get('font_name') is not None:
+                        run.font.name = base_formatting['font_name']
+                    if base_formatting.get('font_color') is not None:
+                        run.font.color.rgb = base_formatting['font_color']
+                    # Apply HTML formatting
+                    if run_spec.get('bold'):
+                        run.bold = True
+                    if run_spec.get('italic'):
+                        run.italic = True
+                    if run_spec.get('underline'):
+                        run.underline = True
+
+            # Add text after placeholder
+            after_text = text[match.end():]
+            # Remove any remaining placeholders
+            unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
+            after_text = unmatched_pattern.sub('', after_text)
+            if after_text:
+                run = paragraph.add_run(after_text)
+                self._apply_run_formatting(run, base_formatting)
+
+            break  # Only process first HTML formatted match
 
     def _insert_text_with_inline_images_at_run(self, paragraph, original_run, text: str, formatting: Dict[str, Any]) -> None:
         """
@@ -540,6 +685,89 @@ class DocxReplacer:
             run.font.name = formatting['font_name']
         if formatting.get('font_color') is not None:
             run.font.color.rgb = formatting['font_color']
+
+    def _process_paragraph_with_html_formatting(
+        self, paragraph, full_text: str, patterns: Dict,
+        processed_values: Dict, base_formatting: Dict[str, Any]
+    ) -> None:
+        """
+        Process a paragraph that contains placeholders with HTML formatting.
+
+        This method handles cases where the replacement value contains HTML tags
+        like <b>, <strong>, <i>, <em>, <u> and creates proper Word runs with
+        the appropriate formatting applied.
+
+        Args:
+            paragraph: The paragraph to process
+            full_text: The full text of the paragraph
+            patterns: Compiled regex patterns for placeholders
+            processed_values: Pre-processed values dict
+            base_formatting: Base formatting to apply (font size, name, color)
+        """
+        # Find all placeholders and their positions
+        placeholder_matches = []
+        for key, (pattern, pattern_spaced) in patterns.items():
+            if key not in processed_values:
+                continue
+            for match in pattern.finditer(full_text):
+                placeholder_matches.append((match.start(), match.end(), key, processed_values[key]))
+            for match in pattern_spaced.finditer(full_text):
+                placeholder_matches.append((match.start(), match.end(), key, processed_values[key]))
+
+        # Sort by position
+        placeholder_matches.sort(key=lambda x: x[0])
+
+        # Process text segments
+        last_end = 0
+        for start, end, key, value_data in placeholder_matches:
+            # Add text before the placeholder
+            if start > last_end:
+                before_text = full_text[last_end:start]
+                if before_text:
+                    run = paragraph.add_run(before_text)
+                    self._apply_run_formatting(run, base_formatting)
+
+            # Add the replacement content
+            if value_data.get('is_html_formatted') and value_data.get('runs'):
+                # Add multiple runs with HTML formatting
+                for run_spec in value_data['runs']:
+                    run = paragraph.add_run(run_spec.get('text', ''))
+                    # Apply base formatting first
+                    if base_formatting.get('font_size') is not None:
+                        run.font.size = base_formatting['font_size']
+                    if base_formatting.get('font_name') is not None:
+                        run.font.name = base_formatting['font_name']
+                    if base_formatting.get('font_color') is not None:
+                        run.font.color.rgb = base_formatting['font_color']
+                    # Apply HTML formatting (overrides base if specified)
+                    if run_spec.get('bold'):
+                        run.bold = True
+                    elif base_formatting.get('bold') is not None:
+                        run.bold = base_formatting['bold']
+                    if run_spec.get('italic'):
+                        run.italic = True
+                    elif base_formatting.get('italic') is not None:
+                        run.italic = base_formatting['italic']
+                    if run_spec.get('underline'):
+                        run.underline = True
+                    elif base_formatting.get('underline') is not None:
+                        run.underline = base_formatting['underline']
+            elif value_data.get('processed'):
+                # Regular text replacement
+                run = paragraph.add_run(value_data['processed'])
+                self._apply_run_formatting(run, base_formatting)
+
+            last_end = end
+
+        # Add remaining text after last placeholder
+        if last_end < len(full_text):
+            remaining_text = full_text[last_end:]
+            # Remove any unmatched placeholders
+            unmatched_pattern = re.compile(r'\{\{[^}]+\}\}')
+            remaining_text = unmatched_pattern.sub('', remaining_text)
+            if remaining_text:
+                run = paragraph.add_run(remaining_text)
+                self._apply_run_formatting(run, base_formatting)
 
     def _process_tables(self, patterns: Dict, processed_values: Dict) -> None:
         """Process all table cells in the document while preserving formatting"""
